@@ -44,6 +44,10 @@ static char *progname = __BASE_FILE__;
 	fprintf(stdout, "%s: " fmt, progname __VA_OPT__(,) __VA_ARGS__); \
 	fflush(stdout); \
 	} while (0)
+#define info2(fmt, ...) do { \
+	fprintf(stdout, fmt __VA_OPT__(,) __VA_ARGS__); \
+	fflush(stdout); \
+	} while (0)
 
 #ifdef DEBUG
 #define debug(fmt, ...) do { \
@@ -793,40 +797,83 @@ RUNNER:
 			} else if (chrootdir(o[opt_r].val)) {
 				info("changed root to %s\n", o[opt_r].val);
 				chrooted++;
+			} else {
+				ret = EXIT_FAILURE;
+				goto EXIT0;
 			};
 		} else {
 			if (chrootdir(o[opt_r].val)) {
 				info("changed root to %s\n", o[opt_r].val);
 				chrooted++;
+			} else {
+				ret = EXIT_FAILURE;
+				goto EXIT0;
 			};
 		};
-		if (chrooted) {
-			int fd;
-			/* Mount /proc and empty /proc/bus/pci/devices: */
-			if (mount("proc", "/proc", "proc",
+	};
+
+	/* Map proc fs in chroot or over /proc if in new mount namespace.
+	 * Ditto with devpts, shmem and mqueue: */
+	if (chrooted || unshared & CLONE_NEWNS) {
+		int fd = -1;
+		int proc = 0, pci = 0, pdev = 0,
+			mq = 0, pts = 0, shm = 0, m = 0;
+		/* Mount /proc and empty /proc/bus/pci/devices: */
+		if (mount("proc", "/proc", "proc",
+				MS_NODEV | MS_NOEXEC | MS_NOSUID,
+				NULL) == 0)
+			proc = 1;
+		else
+			warn("mount -t proc proc /proc: %m\n");
+		if (proc) {
+			if (mount("x", "/proc/bus/pci", "tmpfs",
 					MS_NODEV | MS_NOEXEC | MS_NOSUID,
-					NULL) != 0)
-				warn("mount -t proc proc /proc: %m\n");
-			else if (mount("x", "/proc/bus/pci", "tmpfs",
-					MS_NODEV | MS_NOEXEC | MS_NOSUID,
-					"nr_blocks=128,nr_inodes=32") != 0)
-				warn("mount -t tmpfs x /proc/bus/pci: %m\n");
-			else if ((fd = open("/proc/bus/pci/devices",
-					O_WRONLY | O_CREAT | O_TRUNC, 0644))
-					== -1)
-				warn("creat(/proc/bus/pci/devices): %m\n");
+					"nr_blocks=128,nr_inodes=32") == 0)
+				pci = 1;
 			else
+				warn("mount -t tmpfs x /proc/bus/pci: %m\n");
+		};
+		if (pci) {
+			if ((fd = open("/proc/bus/pci/devices",
+					O_WRONLY | O_CREAT | O_TRUNC, 0644))
+					!= -1) {
+				pdev = 1;
 				close(fd);
-			/* Mount /dev subsystems: */
+			} else {
+				warn("creat(/proc/bus/pci/devices): %m\n");
+			};
+		};
+
+		/* Mount /dev subsystems: */
+		if (unshared & CLONE_NEWIPC) {
 			if (mount("mq", "/dev/mqueue", "mqueue", MS_NODEV |
-					MS_NOEXEC | MS_NOSUID, NULL) != 0)
+					MS_NOEXEC | MS_NOSUID, NULL) == 0)
+				mq = 1;
+			else
 				warn("mount -t mqueue mq /dev/mqueue: %m\n");
-			if (mount("pts", "/dev/pts", "devpts",
-					MS_NOEXEC | MS_NOSUID, NULL) != 0)
-				warn("mount -t devpts pts /dev/pts: %m\n");
-			if (mount("shm", "/dev/shm", "tmpfs", MS_NODEV |
-					MS_NOEXEC | MS_NOSUID, NULL) != 0)
-				warn("mount -t tmpfs shm /dev/shm: %m\n");
+		};
+		if (mount("pts", "/dev/pts", "devpts",
+				MS_NOEXEC | MS_NOSUID, NULL) == 0)
+			pts = 1;
+		else
+			warn("mount -t devpts pts /dev/pts: %m\n");
+		if (mount("shm", "/dev/shm", "tmpfs", MS_NODEV |
+				MS_NOEXEC | MS_NOSUID, NULL) == 0)
+			shm = 1;
+		else
+			warn("mount -t tmpfs shm /dev/shm: %m\n");
+
+		/* Report what has been mounted: */
+		if (proc | pci | pdev | mq | pts | shm) {
+			info("mounted");
+			if (proc) info2("%s /proc", m++ ? "," : "");
+			if (pci)  info2("%s /proc/bus/pci", m++ ? "," : "");
+			if (pdev) info2("%s /proc/bus/pci/devices",
+				m++ ? "," : "");
+			if (mq)   info2("%s /dev/mqueue", m++ ? "," : "");
+			if (pts)  info2("%s /dev/pts", m++ ? "," : "");
+			if (shm)  info2("%s /dev/shm", m++ ? "," : "");
+			info2("\n");
 		};
 	};
 
