@@ -124,3 +124,27 @@ only one tool - you would also need to:
    USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
    root         1  0.0  0.0   3292  1016 ?        R+   15:44   0:00 /bin/ps aux
    ```
+3. run `emerge -s %^jail` in `/jail0` with all namespaces (except user)
+   switched:
+   ```
+   gentoo ~ # nsrun -impuCTn=/run/netns/ns0 -r=/jail0 -P="LANG=C.UTF-8" /usr/bin/emerge -s %^jail
+   nsrun: changed u:gid 0/0/0/32766:0/0/0/0 => 0:0
+   nsrun: dropped 10 supplementary groups
+   nsrun: pivoted root to /jail0
+   nsrun: mounted /proc, /proc/bus/pci, /proc/bus/pci/devices, /dev/mqueue, /dev/pts, /dev/shm
+   nsrun: set hostname to "localhost"
+   nsrun: executing /usr/bin/emerge
+   
+   [ Results for search key : %^jail ]
+   Searching...
+   
+   *  app-misc/jail
+         Latest version available: 2.0-r4
+         Latest version installed: [ Not Installed ]
+         Size of files: 31 KiB
+         Homepage:      https://github.com/spiculator/jail
+         Description:   Builds a chroot and configures all the required files, directories and libraries
+         License:       GPL-2
+   
+   [ Applications found : 1 ]
+   ```
