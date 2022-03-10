@@ -71,15 +71,19 @@ only one tool - you would also need to:
    namespace, with all other traffic except ICMP silently dropped with extreme
    prejudice, even NTP and DHCP). With net namespace prepared beforehand,
    **nsrun** _enters_ it while _creating_ all other necessary namespaces.
-4. security (and anonimity) is not a state, but a process. As more and more
-   features are added to Linux kernel, you need to identify all possible
-   sources of information leakage and disable/plug them, as you go with the
-   unstoppable Flow of Progress.
-5. regarding the (4) above, I think that
+4. currently, **nsrun** mounts fake data over /proc/bus/pci only (so that
+   jailed `lspci` will return empty list of devices). If you need to fake
+   /proc/cpuinfo or hide other parts, manual intervention is required inside
+   the jail, before running the target.
+5. security (and anonimity) is not a state, but a process. As more features are
+   added to Linux kernel, you need to consider whether it's safe enough for you
+   or better be disabled/plug-that-hole-d, on a case by case basis.
+6. regarding the (5) above, I think that
    [user namespace](https://man7.org/linux/man-pages/man7/user_namespaces.7.html)
-   feature is both insecure and not production-ready yet, so I'd recommend
-   disabling `CONFIG_USER_NS` (more data/experiments required to make a
-   final decision on the matter).
+   feature is both insecure and not production-ready yet (in particular, I
+   cannot make it work together with pivot\_root() with the cause unknown still),
+   so I'd recommend disabling `CONFIG_USER_NS` alltogether (more data required
+   to make a final decision on the matter).
 
 ## Examples
 
