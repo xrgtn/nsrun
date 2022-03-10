@@ -312,7 +312,7 @@ int main(int argc, char *argv[]) {
 	char *defargv[2] = {shell, NULL};
 	char **runargv = defargv;
 	char *logname = NULL, *term = NULL;
-	char *defpath[] = {"/usr/sbin:/usr/bin:/sbin:/bin", "/usr/bin:/bin"};
+	char *defpath[] = {"/sbin:/bin:/usr/sbin:/usr/bin", "/bin:/usr/bin"};
 	char *path = defpath[1];
 	char *home = NULL;
 	struct passwb *pw = NULL;
