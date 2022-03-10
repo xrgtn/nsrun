@@ -19,13 +19,13 @@ a new one. When **nsrun** creates new namespace, it allows to bind-mount its ns
 file to a specified location. Entering all namespaces of a running process (in
 single call) is also supported, via `-t=PID` option.
 
-When new *mount* namespace is created (along with others or alone) and
+When new *mount* namespace is *created* (along with others or alone) and
 `-r=ROOT` option is specified, **nsrun** happily chooses to do
 [pivot\_root(2)](https://man7.org/linux/man-pages/man2/pivot_root.2.html)
 instead of *chroot(2)*. If you didn't know, *chroot(2)* changes root of a
 process, while *pivot\_root(2)* changes root of a namespace (of a mount
 namespace, to be exact). Main difference is, when you _enter_ namespace of
-the *chroot()ed* process from outside (via *setns()* call), your root
+the chroot()-ed process from outside (via *setns()* call), your root
 will remain outside the jail. When you enter pivot()-ed namespace, you end
 up in jail all right.
 
