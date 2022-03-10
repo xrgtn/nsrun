@@ -116,7 +116,7 @@ only one tool - you would also need to:
    it's OK to mount proc filesystem directly over existing /proc in system
    root, prior chroot()/pivot\_root() is unnecessary):
    ```
-   gentoo ~ # ~user/work/nsrun/nsrun -mp /bin/ps aux
+   gentoo ~ # nsrun -pm /bin/ps aux
    nsrun: changed u:gid 0/0/0/32765:0/0/0/0 => 0:0
    nsrun: dropped 10 supplementary groups
    nsrun: mounted /proc, /proc/bus/pci, /proc/bus/pci/devices, /dev/pts, /dev/shm
