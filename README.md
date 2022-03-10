@@ -93,14 +93,14 @@ only one tool - you would also need to:
    [net namespace](https://man7.org/linux/man-pages/man7/network_namespaces.7.html)
    (prepared beforehand by `/bin/ip`):
    ```
-   \# ip link add veth1 type veth peer name p-veth1
-   \# ip address replace 192.168.1.1/24 dev veth1
-   \# ip link set dev veth1 up
-   \# ip netns add ns1
-   \# ip link set dev p-veth1 netns ns1
-   \# ip netns exec ns1 ip address replace 192.168.1.2/24 dev p-veth1
-   \# ip netns exec ns1 ip link set dev p-veth1 up
-   \# nsrun -n=/run/netns/ns1 /bin/ping 192.168.1.1 -c1
+   gentoo ~ \# ip link add veth1 type veth peer name p-veth1
+   gentoo ~ \# ip address replace 192.168.1.1/24 dev veth1
+   gentoo ~ \# ip link set dev veth1 up
+   gentoo ~ \# ip netns add ns1
+   gentoo ~ \# ip link set dev p-veth1 netns ns1
+   gentoo ~ \# ip netns exec ns1 ip address replace 192.168.1.2/24 dev p-veth1
+   gentoo ~ \# ip netns exec ns1 ip link set dev p-veth1 up
+   gentoo ~ \# nsrun -n=/run/netns/ns1 /bin/ping 192.168.1.1 -c1
    nsrun: changed u:gid 0/0/0/32766:0/0/0/0 => 0:0
    nsrun: dropped 10 supplementary groups
    nsrun: executing /bin/ping
@@ -110,7 +110,17 @@ only one tool - you would also need to:
    --- 192.168.1.1 ping statistics ---
    1 packets transmitted, 1 received, 0% packet loss, time 0ms
    rtt min/avg/max/mdev = 0.111/0.111/0.111/0.000 ms
-   \# ip netns del ns1
+   gentoo ~ \# ip netns del ns1
    ```
-2. run `ps` in new pid namespace:
-   TODO
+2. run `ps` in new pid+mount namespace (when `CLONE_NEWNS` is unshare()-d,
+   it's OK to mount proc filesystem directly over existing /proc in system
+   root, prior chroot()/pivot\_root() is unnecessary):
+   ```
+   gentoo ~ \# ~user/work/nsrun/nsrun -mp /bin/ps aux
+   nsrun: changed u:gid 0/0/0/32765:0/0/0/0 => 0:0
+   nsrun: dropped 10 supplementary groups
+   nsrun: mounted /proc, /proc/bus/pci, /proc/bus/pci/devices, /dev/pts, /dev/shm
+   nsrun: executing /bin/ps
+   USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+   root         1  0.0  0.0   3292  1016 ?        R+   15:44   0:00 /bin/ps aux
+   ```
