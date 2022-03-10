@@ -41,7 +41,7 @@ untrusted binaries without using a full-blown virtual machine. But **nsrun** is
 only one tool - you would also need to:
 1. prepare a ___separate filesystem___ for jail (beware of
    [inotify](https://man7.org/linux/man-pages/man7/inotify.7.html)
-   and its ilk; JFYI `firefox` ___does___ use *inotify*)
+   and its ilk; JFYI `firefox` ___does___ use *inotify*);
 2. set up minimal distro in jail, not just copy binaries and .so files
    they depend on (for Debian GNU/Linux, there used to exist some tools
    like `dchroot`, `schroot` et cetera, I think they still do;  
@@ -51,7 +51,7 @@ only one tool - you would also need to:
    which are _not_ listed as `NEEDED` in `objdump --private-headers`.
    Of course, <strike>complex</strike>bloated software like `firefox` or
    `telegram` load plugins programmatically on a whim and they need _data_
-   files you typically have no idea from where.
+   files you typically have no idea from where;
 3. set up network namespace before (or after) *unshare(2)*. I recommend the
    former as it's easier to set up statically by `/etc/init.d/ns0`,
    `/etc/init.d/ns1` and so on and make them start _after_
@@ -71,14 +71,15 @@ only one tool - you would also need to:
    namespace, with all other traffic except ICMP silently dropped with extreme
    prejudice, even NTP and DHCP). With net namespace prepared beforehand,
    **nsrun** _enters_ it while _creating_ all other necessary namespaces.
-4. currently, **nsrun** mounts fake data over /proc/bus/pci only (so that
+4. create unasuming regular user account in jail, to run target binary;
+5. currently, **nsrun** mounts fake data over /proc/bus/pci only (so that
    jailed `lspci` will return empty list of devices). If you need to fake
    /proc/cpuinfo or hide other parts, manual intervention is required inside
-   the jail, before running the target.
-5. security (and anonimity) is not a state, but a process. As more features are
+   the jail, before running the target;
+6. security (and anonimity) is not a state, but a process. As more features are
    added to Linux kernel, you need to consider whether it's safe enough for you
-   or better be disabled/plug-that-hole-d, on a case by case basis.
-6. regarding the (5) above, I think that
+   or better be disabled/plug-that-hole-d, on a case by case basis;
+7. regarding the (6) above, I think that
    [user namespace](https://man7.org/linux/man-pages/man7/user_namespaces.7.html)
    feature is both insecure and not production-ready yet (in particular, I
    cannot make it work together with pivot\_root() with the cause unknown still),
