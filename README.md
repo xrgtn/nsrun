@@ -10,7 +10,7 @@ from util-linux package. It runs given command (or login shell for user
 account) in isolated environment: in other
 [namespace[s]](https://man7.org/linux/man-pages/man7/namespaces.7.html)
 and/or in
-[chroot](https://man7.org/linux/man-pages/man2/chroot.2.html).
+[chroot(2)](https://man7.org/linux/man-pages/man2/chroot.2.html).
 When switching to namespace, **nsrun** allows either entering existing
 ([setns(2)](https://man7.org/linux/man-pages/man2/setns.2.html))
 or creating
@@ -18,6 +18,18 @@ or creating
 a new one. When **nsrun** creates new namespace, it allows to bind-mount its ns
 file to a specified location. Entering all namespaces of a running process (in
 single call) is also supported, via `-t=PID` option.
+
+When new *mount* namespace is created (along with others or alone) and
+`-r=ROOT` option is specified, **nsrun** happily chooses to do
+[pivot\_root(2)](https://man7.org/linux/man-pages/man2/pivot_root.2.html)
+instead of *chroot(2)*. If you didn't know, *chroot(2)* changes root of a
+process, while *pivot\_root(2)* changes root of a namespace (of a mount
+namespace, to be exact). Main difference is, when you _enter_ namespace of
+the *chroot()ed* process from outside (via *setns()* call), your root
+will remain outside the jail. When you enter pivot()-ed namespace, you end
+up in jail all right.
+
+## Goal
 
 **nsrun** was created in attempt to simplify chore of executing `nsenter`,
 `unshare`, `chroot`, `mount` & co when trying to run `firefox` or e.g.
@@ -27,9 +39,9 @@ network traffic or tattle ethernet adapter's MAC address).
 The goal at large was maximal possible isolation and anonymization when running
 untrusted binaries without using a full-blown virtual machine. But **nsrun** is
 only one tool - you would also need to:
-1. prepare a _separate filesystem_ for jail (beware of
-   [inotify(7)](https://man7.org/linux/man-pages/man7/inotify.7.html)
-   and its ilk; JFYI `firefox` _does_ use *inotify(7)*)
+1. prepare a ___separate filesystem___ for jail (beware of
+   [inotify](https://man7.org/linux/man-pages/man7/inotify.7.html)
+   and its ilk; JFYI `firefox` ___does___ use *inotify*)
 2. set up minimal distro in jail, not just copy binaries and .so files
    they depend on (for Debian GNU/Linux, there used to exist some tools
    like `dchroot`, `schroot` et cetera, I think they still do;  
@@ -38,8 +50,8 @@ only one tool - you would also need to:
    do, I tell you that even `glibc` may want to load `libnss_db.so` and co
    which are _not_ listed as `NEEDED` in `objdump --private-headers`.
    Of course, <strike>complex</strike>bloated software like `firefox` or
-   `telegram` load plugins programmatically on a whim and they need _data
-   files_ you typically have no idea from where.
+   `telegram` load plugins programmatically on a whim and they need _data_
+   files you typically have no idea from where.
 3. set up network namespace before (or after) *unshare(2)*. I recommend the
    former as it's easier to set up statically by `/etc/init.d/ns0`,
    `/etc/init.d/ns1` and so on and make them start _after_
