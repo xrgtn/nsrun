@@ -3,7 +3,7 @@
 #include <termios.h>	/* tcgetattr(), tcsetattr() */
 #include <unistd.h>	/* tcgetattr(), tcsetattr(), execve(), pipe(), read(),
 			 * write(), close(), fork(), chdir(), chroot(),
-			 * getgroups(), sethostname() */
+			 * getgroups(), sethostname(), STDIN_FILENO */
 #include <stdlib.h>	/* getenv(), setenv(), malloc(), free() */
 #include <stdio.h>	/* printf(), fprintf(), asprintf(), vasprintf() */
 #include <stdarg.h>	/* va_list, va_start(), va_end() */
@@ -455,7 +455,7 @@ int main(int argc, char *argv[]) {
 	/* Fix tty's erase char setting if -e option was given: */
 	if (o[opt_e].cnt) {
 		/* get original tty settings: */
-		if (tcgetattr(0, &ttios) != 0) {
+		if (tcgetattr(STDIN_FILENO, &ttios) != 0) {
 			if (errno == ENOTTY)
 				warn("stdin is not a tty\n");
 			else
@@ -464,7 +464,7 @@ int main(int argc, char *argv[]) {
 			/* change erase char: */
 			ttios.c_cc[VERASE] = opt_e_chr;
 			/* change tty settings: */
-			if (tcsetattr(0, TCSANOW, &ttios) != 0)
+			if (tcsetattr(STDIN_FILENO, TCSANOW, &ttios) != 0)
 				warn("tcsetaddr(stdin): %m\n");
 			else
 				info("set tty erase=%s\n", o[opt_e].val);
@@ -727,6 +727,10 @@ int main(int argc, char *argv[]) {
 			ret = EXIT_FAILURE;
 			goto EXIT0;
 		};
+		/* After we're done reading commands from parent,
+		 * close the pipe and go run: */
+		close(runner_pipefd[0]);
+		runner_pipefd[0] = -1;
 		goto RUNNER;
 	} else {
 		/* Parent side after fork:
