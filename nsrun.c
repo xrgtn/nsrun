@@ -446,7 +446,7 @@ int main(int argc, char *argv[]) {
 		goto EXIT0;
 	};
 
-	/* Write mount src/tgt for all requested bind mounts: */
+	/* Write down mount src/tgt for all requested bind mounts: */
 	pid = getpid();
 	for (i = opt_i; i <= opt_U; i++)
 		if (req_src_tgt(mnt + mntc, o + i, nsp[i].fmt, (unsigned)pid))
