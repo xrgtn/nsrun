@@ -907,6 +907,32 @@ RUNNER:
 			warn("set hostname to \"%s\": %m\n", newhostname);
 	};
 
+	exec_pid = fork();
+	if (exec_pid == -1) {
+		err("fork(exec): %m\n");
+		goto EXIT1;
+	} else if (exec_pid != 0) {
+		/* Here we do duties of /sbin/init, namely reaping zombie
+		 * processes while waiting for exec_pid to finish. */
+		do {
+			wpid = wait(&wstatus);
+			if (wpid == -1 && errno != EINTR) {
+				err("wait(): %m\n");
+				goto EXIT1;
+			}
+		} while (wpid != exec_pid);
+		if (WIFEXITED(wstatus)) {
+			ret = WEXITSTATUS(wstatus);
+		} else if (WIFSIGNALED(wstatus)) {
+			/* Commit suicide with the same signal, to relay
+			 * exec_pid's exact wstatus to our parent: */
+			kill(getpid(), WTERMSIG(wstatus));
+		};
+		goto EXIT0;
+	};
+
+	/* From here on it's exec_pid running: */
+
 	/* Get user's shell & co if there's nothing left on cmdline: */
 	pw = getpwb(cr2.euid);
 	if (pw == NULL || pw->pwd.pw_shell == NULL
