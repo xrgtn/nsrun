@@ -45,7 +45,7 @@ only one tool - you would also need to:
 2. set up minimal distro in jail, not just copy binaries and .so files
    they depend on (for Debian GNU/Linux, there used to exist some tools
    like `dchroot`, `schroot` et cetera, I think they still do;  
-   for Gentoo I'm still in process of writing `mkjailfs.sh` script).  
+   for Gentoo I'm writing `mkgentoojail.sh` script).  
    If you wonder why copying executables with their depenedncies won't
    do, I tell you that even `glibc` may want to load `libnss_db.so` and co
    which are _not_ listed as `NEEDED` in `objdump --private-headers`.
