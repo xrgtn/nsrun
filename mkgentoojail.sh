@@ -263,9 +263,9 @@ mkjail() {
 	DSRV="$4"
 	JUSR="$5"
 	JUID="$6"
-	expr match "$JUSR" '[a-zA-Z_][a-zA-Z0-9_]*$' \
+	expr match "$JUSR" '[a-zA-Z_][a-zA-Z0-9_]*$' >/dev/null \
 		|| die "invalid user name: $JUSR"
-	expr match "$JUID" '[0-9][0-9]*$' \
+	expr match "$JUID" '[0-9][0-9]*$' >/dev/null \
 		|| die "invalid uid: $JUID"
 
 	# Clean all files/directories in jail:
@@ -456,9 +456,9 @@ enter_jail() {
 	[ "z$JNET" != "z" ] || die
 	JUSR="$2"
 	JUID="$3"
-	expr match "$JUSR" '[a-zA-Z_][a-zA-Z0-9_]*$' \
+	expr match "$JUSR" '[a-zA-Z_][a-zA-Z0-9_]*$' >/dev/null \
 		|| die "invalid user name: $JUSR"
-	expr match "$JUID" '[0-9][0-9]*$' \
+	expr match "$JUID" '[0-9][0-9]*$' >/dev/null \
 		|| die "invalid uid: $JUID"
 
 	# Update /etc/resolv.conf in jail:
