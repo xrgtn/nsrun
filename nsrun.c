@@ -821,7 +821,7 @@ RUNNER:
 	if (chrooted || unshared & CLONE_NEWNS) {
 		int fd = -1;
 		int proc = 0, pci = 0, pdev = 0,
-			mq = 0, pts = 0, shm = 0, m = 0;
+			mq = 0, pts = 0, shm = 0, run = 0, m = 0;
 		/* Mount /proc and empty /proc/bus/pci/devices: */
 		if (mount("proc", "/proc", "proc",
 				MS_NODEV | MS_NOEXEC | MS_NOSUID,
@@ -866,9 +866,15 @@ RUNNER:
 			shm = 1;
 		else
 			warn("mount -t tmpfs shm /dev/shm: %m\n");
+		if (mount("run", "/run", "tmpfs", MS_NODEV |
+				MS_NOEXEC | MS_NOSUID,
+				"nr_inodes=2048,nr_blocks=8192") == 0)
+			run = 1;
+		else
+			warn("mount -t tmpfs run /run: %m\n");
 
 		/* Report what has been mounted: */
-		if (proc | pci | pdev | mq | pts | shm) {
+		if (proc | pci | pdev | mq | pts | shm | run) {
 			info("mounted");
 			if (proc) info2("%s /proc", m++ ? "," : "");
 			if (pci)  info2("%s /proc/bus/pci", m++ ? "," : "");
@@ -877,6 +883,7 @@ RUNNER:
 			if (mq)   info2("%s /dev/mqueue", m++ ? "," : "");
 			if (pts)  info2("%s /dev/pts", m++ ? "," : "");
 			if (shm)  info2("%s /dev/shm", m++ ? "," : "");
+			if (run)  info2("%s /run", m++ ? "," : "");
 			info2("\n");
 		};
 	};
