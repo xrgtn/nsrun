@@ -376,8 +376,9 @@ int main(int argc, char *argv[]) {
 	/* Array of required src=>tgt pairs to be bind mounted: */
 	struct src_tgt mnt[opt_U - opt_i + 1];
 	int mntc = 0;	/* actual number of elements in mnt[] */
-	pid_t pid, mounter_pid = -1, runner_pid = -1, wpid;
-	int mounter_pipefd[2] = {-1, -1};
+	pid_t pid, oldns_pid = -1, runner_pid = -1, wpid;
+	int to_oldns_pipefd[2] = {-1, -1};
+	int from_oldns_pipefd[2] = {-1, -1};
 	int runner_pipefd[2] = {-1, -1};
 	char ping = '!';
 	int wstatus = 0;
@@ -471,29 +472,34 @@ int main(int argc, char *argv[]) {
 		};
 	};
 
-	/* Start mounter child: */
-	if (pipe(mounter_pipefd) != 0) {
-		err("pipe(mounter_pipefd): %m\n");
-		goto EXIT0;
+	/* Start oldns child: */
+	if (pipe(to_oldns_pipefd) != 0) {
+		err("pipe(to_oldns_pipefd): %m\n");
+		goto EXIT1;
 	};
-	mounter_pid = fork();
-	if (mounter_pid == -1) {
-		err("fork(mounter): %m\n");
-		goto EXIT0;
-	} else if (mounter_pid == 0) {
-		/* Executing in mounter child process: */
+	if (pipe(from_oldns_pipefd) != 0) {
+		err("pipe(from_oldns_pipefd): %m\n");
+		goto EXIT1;
+	};
+	oldns_pid = fork();
+	if (oldns_pid == -1) {
+		err("fork(oldns): %m\n");
+		goto EXIT1;
+	} else if (oldns_pid == 0) {
+		/* Executing in oldns child process: */
 		ret = EXIT_SUCCESS;
-		/* Close write side of pipe: */
-		close(mounter_pipefd[1]);
-		mounter_pipefd[1] = -1;
+		/* Close write side of "to" pipe: */
+		close(to_oldns_pipefd[1]);
+		to_oldns_pipefd[1] = -1;
+		/* Close read side of "from" pipe: */
+		close(from_oldns_pipefd[0]);
+		from_oldns_pipefd[0] = -1;
 		/* Wait for ping from parent: */
 		while (1) {
-			if (!readall(mounter_pipefd[0], &ping, 1,
-					"pipe from mounter's parent")) {
-				ret = EXIT_FAILURE;
-				goto EXIT0;
-			};
-			debug("mounter received '%.1s' cmd\n", &ping);
+			if (!readall(to_oldns_pipefd[0], &ping, 1,
+					"pipe to oldns"))
+				goto EXIT1;
+			debug("oldns received '%.1s' cmd\n", &ping);
 			switch (ping) {
 			case 'm':
 				/* Do bind mounts: */
@@ -513,31 +519,22 @@ int main(int argc, char *argv[]) {
 				 * gid_map */
 				char *s;
 				pid_t p;
-				if (!readall(mounter_pipefd[0], (char *)&p,
-						sizeof(p), "pipe from"
-						"mounter's parent")) {
-					ret = EXIT_FAILURE;
-					goto EXIT0;
-				};
-				if (asprintf(&s, "/proc/%u/uid_map", p) < 0) {
-					ret = EXIT_FAILURE;
-					break;
-				};
+				if (!readall(to_oldns_pipefd[0], (char *)&p,
+						sizeof(p), "pipe to oldns"))
+					goto EXIT1;
+				if (asprintf(&s, "/proc/%u/uid_map", p) == -1)
+					goto EXIT1;
 				if (!writestr1(s, "0 0 65534\n"))
 					ret = EXIT_FAILURE;
 				free(s);
-				if (asprintf(&s, "/proc/%u/setgroups", p) < 0)
-				{
-					ret = EXIT_FAILURE;
-					break;
-				};
+				if (asprintf(&s, "/proc/%u/setgroups", p)
+						== -1)
+					goto EXIT1;
 				if (!writestr1(s, "allow"))
 					ret = EXIT_FAILURE;
 				free(s);
-				if (asprintf(&s, "/proc/%u/gid_map", p) < 0) {
-					ret = EXIT_FAILURE;
-					break;
-				};
+				if (asprintf(&s, "/proc/%u/gid_map", p) == -1)
+					goto EXIT1;
 				if (!writestr1(s, "0 0 65534\n"))
 					ret = EXIT_FAILURE;
 				free(s);
@@ -546,18 +543,25 @@ int main(int argc, char *argv[]) {
 				/* Quit: */
 				goto EXIT0;
 			default:
-				err("invalid mounter cmd '%.1s'\n", &ping);
-				ret = EXIT_FAILURE;
-				goto EXIT0;
+				err("invalid oldns cmd '%.1s'\n", &ping);
+				goto EXIT1;
 			};
+			/* Send cmd result to parent: */
+			if (!writeall(from_oldns_pipefd[1], (char *)&ret,
+					sizeof(ret), "pipe from oldns"))
+				goto EXIT1;
 		};
-		goto EXIT0;
+		/* XXX: unreachable statement: */
+		goto EXIT1;
 	} else {
-		/* Close read side of pipe: */
-		close(mounter_pipefd[0]);
-		mounter_pipefd[0] = -1;
+		/* Close read side of "to" pipe: */
+		close(to_oldns_pipefd[0]);
+		to_oldns_pipefd[0] = -1;
+		/* Close write side of "from" pipe: */
+		close(from_oldns_pipefd[1]);
+		from_oldns_pipefd[1] = -1;
 		/* Cleanup list of bind mounts in parent process, 'cause it's
-		 * been successfully delegated to mounter child: */
+		 * been successfully delegated to oldns child: */
 		while (mntc > 0)
 			free(mnt[--mntc].src);
 	};
@@ -575,8 +579,7 @@ int main(int argc, char *argv[]) {
 				if (nsp[i].fd == -1) {
 					err("open(%s, O_RDONLY): %m\n",
 						nsp[i].fn);
-					ret = EXIT_FAILURE;
-					goto EXIT0;
+					goto EXIT1;
 				} else {
 					/* Add nsp[i].type to setns_flags: */
 					setns_flags |= nsp[i].type;
@@ -597,8 +600,7 @@ int main(int argc, char *argv[]) {
 		if (nspidfd == -1) {
 			err("pidfd_open(%u, 0): %m\n",
 				(unsigned)o[opt_t].ival);
-			ret = EXIT_FAILURE;
-			goto EXIT0;
+			goto EXIT1;
 		} else {
 			/* Add nspidfd_type to setns_flags: */
 			setns_flags |= nspidfd_type;
@@ -632,8 +634,7 @@ int main(int argc, char *argv[]) {
 		if (nsp[i].fd == -1) continue;
 		if (setns(nsp[i].fd, nsp[i].type) != 0) {
 			err("setns(%s, %x): %m\n", nsp[i].fn, nsp[i].type);
-			ret = EXIT_FAILURE;
-			goto EXIT0;
+			goto EXIT1;
 		};
 		close(nsp[i].fd);
 		nsp[i].fd = -1;
@@ -644,8 +645,7 @@ int main(int argc, char *argv[]) {
 		if (setns(nspidfd, nspidfd_type) != 0) {
 			err("setns(pid %i, %x): %m\n",
 				o[opt_t].ival, nspidfd_type);
-			ret = EXIT_FAILURE;
-			goto EXIT0;
+			goto EXIT1;
 		};
 		close(nspidfd);
 		nspidfd = -1;
@@ -686,8 +686,7 @@ int main(int argc, char *argv[]) {
 			unshared = unshare_flags;
 		else {
 			err("unshare(%x): %m\n", unshare_flags);
-			ret = EXIT_FAILURE;
-			goto EXIT0;
+			goto EXIT1;
 		};
 	};
 
@@ -697,35 +696,33 @@ int main(int argc, char *argv[]) {
 	/* Fork runner child: */
 	if (pipe(runner_pipefd) != 0) {
 		err("pipe(runner_pipefd): %m\n");
-		ret = EXIT_FAILURE;
-		goto EXIT0;
+		goto EXIT1;
 	};
 	runner_pid = fork();
 	if (runner_pid == -1) {
 		err("fork(runner): %m\n");
-		ret = EXIT_FAILURE;
-		goto EXIT0;
+		goto EXIT1;
 	} else if (runner_pid == 0) {
-		/* Runner child don't have any use for pipe to its brother: */
-		close(mounter_pipefd[1]);
-		mounter_pipefd[1] = -1;
+		/* Runner child don't have any use for pipe to/from its
+		 * sibling: */
+		close(to_oldns_pipefd[1]);
+		to_oldns_pipefd[1] = -1;
+		close(from_oldns_pipefd[0]);
+		from_oldns_pipefd[0] = -1;
 		/* Close write side of runner pipe: */
 		close(runner_pipefd[1]);
 		runner_pipefd[1] = -1;
 		/* Wait for ping from parent: */
 		if (!readall(runner_pipefd[0], &ping, 1,
-				"pipe from runner's parent")) {
-			ret = EXIT_FAILURE;
-			goto EXIT0;
-		};
+				"pipe from runner's parent"))
+			goto EXIT1;
 		debug("runner received '%.1s' cmd\n", &ping);
 		switch (ping) {
 		case 'r':
 			break;
 		default:
 			err("invalid runner cmd '%.1s'\n", &ping);
-			ret = EXIT_FAILURE;
-			goto EXIT0;
+			goto EXIT1;
 		};
 		/* After we're done reading commands from parent,
 		 * close the pipe and go run: */
@@ -735,42 +732,56 @@ int main(int argc, char *argv[]) {
 	} else {
 		/* Parent side after fork:
 		 * 1. close read side of runner pipe;
-		 * 3. ask mounter child to do planned bind mounts;
-		 * 4. ask mounter child to write uid_map/setgroups and gid_map
+		 * 3. ask oldns child to do planned bind mounts;
+		 * 4. ask oldns child to write uid_map/setgroups and gid_map
 		 *    for the runner_pid (if necessary);
-		 * 5. send 'q' command and wait for mounter child to exit;
+		 * 5. send 'q' command and wait for oldns child to exit;
 		 * 6. send 'r' command to runner to start it;
 		 * 7. wait for runner completion and return its exit code.
 		 */
 		close(runner_pipefd[0]);
 		runner_pipefd[0] = -1;
 
+		/* Send 'm' ("do bind mounts") command: */
 		ping = 'm';
-		if (!writeall(mounter_pipefd[1], &ping, 1, "pipe to mounter"))
-			goto EXIT0;
+		if (!writeall(to_oldns_pipefd[1], &ping, 1,
+				"pipe to oldns"))
+			goto EXIT1;
+		/* Receive 'm' results: */
+		if (!readall(from_oldns_pipefd[0], (char *)&ret,
+				sizeof(ret), "pipe from oldns")
+				|| ret != EXIT_SUCCESS)
+			goto EXIT1;
 		if (unshare_flags & CLONE_NEWUSER) {
+			/* Send 'w' ("write g:uid maps") command: */
 			ping = 'w';
-			if (!writeall(mounter_pipefd[1], &ping, 1,
-					"pipe to mounter"))
-				goto EXIT0;
-			if (!writeall(mounter_pipefd[1], (char *)&runner_pid,
-				sizeof(runner_pid), "pipe to mounter"))
-				goto EXIT0;
+			if (!writeall(to_oldns_pipefd[1], &ping, 1,
+					"pipe to oldns"))
+				goto EXIT1;
+			if (!writeall(to_oldns_pipefd[1], (char *)&runner_pid,
+					sizeof(runner_pid), "pipe to oldns"))
+				goto EXIT1;
+			/* Receive 'w' results: */
+			if (!readall(from_oldns_pipefd[0], (char *)&ret,
+					sizeof(ret), "pipe from oldns")
+					|| ret != EXIT_SUCCESS)
+				goto EXIT1;
 		};
+		/* Send 'q' ("quit") command: */
 		ping = 'q';
-		if (!writeall(mounter_pipefd[1], &ping, 1, "pipe to mounter"))
-			goto EXIT0;
-		/* Wait for mounter_pid exit: */
-		while ((wpid = waitpid(mounter_pid, &wstatus, 0)) ==
-				mounter_pid) {
+		if (!writeall(to_oldns_pipefd[1], &ping, 1, "pipe to oldns"))
+			goto EXIT1;
+		/* Wait for oldns_pid exit: */
+		while ((wpid = waitpid(oldns_pid, &wstatus, 0)) ==
+				oldns_pid) {
 			if (WIFEXITED(wstatus) || WIFSIGNALED(wstatus))
 				break;
 		};
-		if (wpid != mounter_pid)
-			warn("waitpid(%u(mounter)): %m\n", mounter_pid);
+		if (wpid != oldns_pid)
+			warn("waitpid(%u(oldns)): %m\n", oldns_pid);
 #ifdef DEBUG
 		else {
-			fprintf(stdout, "%s: mounter ", progname);
+			fprintf(stdout, "%s: oldns ", progname);
 			if (WIFEXITED(wstatus))
 				fprintf(stdout, "exited with %u\n",
 					WEXITSTATUS(wstatus));
@@ -781,9 +792,11 @@ int main(int argc, char *argv[]) {
 				fprintf(stdout, "exited somehow\n");
 		};
 #endif
-		/* After mounter quits, we don't need its pipe anymore: */
-		close(mounter_pipefd[1]);
-		mounter_pipefd[1] = -1;
+		/* After oldns quits, we don't need its pipes anymore: */
+		close(to_oldns_pipefd[1]);
+		to_oldns_pipefd[1] = -1;
+		close(from_oldns_pipefd[0]);
+		from_oldns_pipefd[0] = -1;
 
 		goto EXEC_RUNNER;
 	};
@@ -802,16 +815,14 @@ RUNNER:
 				info("changed root to %s\n", o[opt_r].val);
 				chrooted++;
 			} else {
-				ret = EXIT_FAILURE;
-				goto EXIT0;
+				goto EXIT1;
 			};
 		} else {
 			if (chrootdir(o[opt_r].val)) {
 				info("changed root to %s\n", o[opt_r].val);
 				chrooted++;
 			} else {
-				ret = EXIT_FAILURE;
-				goto EXIT0;
+				goto EXIT1;
 			};
 		};
 	};
@@ -958,15 +969,14 @@ RUNNER:
 	execve(runprog, runargv, environ);
 	/* Successful exec() doesn't return, so... */
 	err("execve(%s): %m\n", runargv[0]);
-	ret = EXIT_FAILURE;
-	goto EXIT0;
+	goto EXIT1;
 
 EXEC_RUNNER:
-	/* Send 'r' to runner child after mounter finishes: */
+	/* Send 'r' to runner child after oldns finishes: */
 	ping = 'r';
 	if (!writeall(runner_pipefd[1], &ping, 1, "pipe to runner")) {
 		kill(runner_pid, SIGKILL);
-		goto EXIT0;
+		goto EXIT1;
 	}
 
 	/* Wait for runner child to exit and that's it: */
@@ -992,21 +1002,26 @@ EXIT0:	if (pw != NULL) free(pw);
 			close(nsp[i].fd);
 	};
 	for (i = 0; i <= 1; i++) {
-		if (mounter_pipefd[i] != -1)
-			close(mounter_pipefd[i]);
+		if (to_oldns_pipefd[i] != -1)
+			close(to_oldns_pipefd[i]);
+		if (from_oldns_pipefd[i] != -1)
+			close(from_oldns_pipefd[i]);
 		if (runner_pipefd[i] != -1)
 			close(runner_pipefd[i]);
 	};
 	if (runner_pid != -1 && runner_pid != 0)
 		kill(runner_pid, SIGKILL);
-	if (mounter_pid != -1 && mounter_pid != 0)
-		kill(mounter_pid, SIGKILL);
+	if (oldns_pid != -1 && oldns_pid != 0)
+		kill(oldns_pid, SIGKILL);
 	while (mntc > 0) {
 		if (mnt[--mntc].src != NULL)
 			free(mnt[mntc].src);
 	};
 	freeoptv(o);
 	return ret;
+
+EXIT1:	ret = EXIT_FAILURE;
+	goto EXIT0;
 };
 
 /* vi:set sw=8 ts=8 noet tw=79: */
