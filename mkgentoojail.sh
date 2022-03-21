@@ -483,6 +483,28 @@ enter_jail() {
 		/bin/su -w DISPLAY -Pl "$JUSR"
 }
 
+# USAGE: enter_jail_as_root path/to/jail
+enter_jail_as_root() {
+	chdir_jail "$1"
+	[ "z$JAIL" != "z" ] || die
+	[ "z$JNAM" != "z" ] || die
+	[ "z$JNET" != "z" ] || die
+
+	# Update /etc/resolv.conf in jail:
+	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf"
+
+	# Entering as root is usually done for manual emerge/eselect etc,
+	# therefore we need /var/db/repos and other mounts:
+	mount_jail_var "$JAIL" "$JNAM"
+
+	# Enter as root:
+	nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
+		/bin/su -Pl "root"
+
+	# Umount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
+	umount_jail_var "$JAIL" "$JNAM"
+}
+
 case "z$2" in
 z|zcreate|zfirefox|ztelegram*)
 	mkjail "$1" "$ARCH" "$PROF" "$DSRV" "$JUSR" "$JUID" "$2"
@@ -494,7 +516,7 @@ zenter)
 	enter_jail "$1" "$JUSR" "$JUID"
 	;;
 zroot)
-	enter_jail "$1" root 0
+	enter_jail_as_root "$1"
 	;;
 z*)
 	die "USAGE: $0 /path/to/jail {create|firefox|telegram|update|enter}"
