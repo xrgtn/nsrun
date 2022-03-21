@@ -469,9 +469,13 @@ enter_jail() {
 	XDMAUTHF="`ls -t "$XDMAUTHD" | head -n1`"
 	MITMACOO="`xauth -f "$XDMAUTHD/$XDMAUTHF" list \
 		| head -n1 | awk '{print $3}'`"
-	true >"$JAIL/home/$JUSR/.Xauthority"
-	xauth -f "$JAIL/home/$JUSR/.Xauthority" add "$JNET.1:0" . "$MITMACOO"
-	chown "$JUID:$JUID" "$JAIL/home/$JUSR/.Xauthority"
+	case "z$JUSER" in
+	zroot)	JXAUTH="$JAIL/root/.Xauthority";;
+	z*)	JXAUTH="$JAIL/home/$JUSR/.Xauthority";;
+	esac
+	true >"$JXAUTH"
+	xauth -f "$JXAUTH" add "$JNET.1:0" . "$MITMACOO"
+	chown "$JUID:$JUID" "$JXAUTH"
 
 	# Enter as JUSR:
 	nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
