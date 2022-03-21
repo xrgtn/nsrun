@@ -469,7 +469,7 @@ enter_jail() {
 	XDMAUTHF="`ls -t "$XDMAUTHD" | head -n1`"
 	MITMACOO="`xauth -f "$XDMAUTHD/$XDMAUTHF" list \
 		| head -n1 | awk '{print $3}'`"
-	case "z$JUSER" in
+	case "z$JUSR" in
 	zroot)	JXAUTH="$JAIL/root/.Xauthority";;
 	z*)	JXAUTH="$JAIL/home/$JUSR/.Xauthority";;
 	esac
