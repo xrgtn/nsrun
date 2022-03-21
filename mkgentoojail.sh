@@ -489,6 +489,9 @@ zupdate)
 zenter)
 	enter_jail "$1" "$JUSR" "$JUID"
 	;;
+zroot)
+	enter_jail "$1" root 0
+	;;
 z*)
 	die "USAGE: $0 /path/to/jail {create|firefox|telegram|update|enter}"
 	;;
