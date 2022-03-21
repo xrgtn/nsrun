@@ -376,7 +376,7 @@ int main(int argc, char *argv[]) {
 	/* Array of required src=>tgt pairs to be bind mounted: */
 	struct src_tgt mnt[opt_U - opt_i + 1];
 	int mntc = 0;	/* actual number of elements in mnt[] */
-	pid_t pid, oldns_pid = -1, runner_pid = -1, wpid;
+	pid_t pid, oldns_pid = -1, runner_pid = -1, exec_pid = 1, wpid;
 	int to_oldns_pipefd[2] = {-1, -1};
 	int from_oldns_pipefd[2] = {-1, -1};
 	int runner_pipefd[2] = {-1, -1};
@@ -1009,6 +1009,8 @@ EXIT0:	if (pw != NULL) free(pw);
 		if (runner_pipefd[i] != -1)
 			close(runner_pipefd[i]);
 	};
+	if (exec_pid != -1 && exec_pid != 0)
+		kill(exec_pid, SIGKILL);
 	if (runner_pid != -1 && runner_pid != 0)
 		kill(runner_pid, SIGKILL);
 	if (oldns_pid != -1 && oldns_pid != 0)
