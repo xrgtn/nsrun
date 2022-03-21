@@ -230,12 +230,22 @@ mount_jail_var() {
 	# Mount /var/cache/distfiles:
 	mount --bind /var/cache/distfiles "$JAIL/var/cache/distfiles"
 	mount --make-slave "$JAIL/var/cache/distfiles"
+
+	# Mount /var/cache/binpkgs:
+	mount --bind /var/cache/binpkgs "$JAIL/var/cache/binpkgs"
+	mount --make-slave "$JAIL/var/cache/binpkgs"
+
+	# Mount /usr/src:
+	mount --bind /usr/src "$JAIL/usr/src"
+	mount --make-slave "$JAIL/usr/src"
 }
 
 # USAGE: umount_jail_var JAIL JNAM
 umount_jail_var() {
-	umount --recursive "$JAIL/var/db/repos"
+	umount --recursive "$JAIL/usr/src"
+	umount --recursive "$JAIL/var/cache/binpkgs"
 	umount --recursive "$JAIL/var/cache/distfiles"
+	umount --recursive "$JAIL/var/db/repos"
 	umount --recursive "$JAIL/var/tmp/portage"
 	rm -rf /var/tmp/portage-"$JNAM"
 }
