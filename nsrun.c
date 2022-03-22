@@ -914,18 +914,22 @@ RUNNER:
 	} else if (exec_pid != 0) {
 		/* Here we do duties of /sbin/init, namely reaping zombie
 		 * processes while waiting for exec_pid to finish. */
-		int r = EXIT_FAILURE;
+		int r, f = 0;
 		do {
 			wpid = wait(&wstatus);
-			if (wpid == exec_pid)
+			if (wpid == exec_pid) {
 				r = wstatus;
+				f = 1;
+			};
 		} while (wpid != -1 || errno == EINTR);
 		if (wpid == -1 && errno != ECHILD) {
 			/* ECHILD: The calling process has no existing
 			 * unwaited-for child processes.
 			 * I.e. all children have already terminated. */
 			err("wait(): %m\n");
-			goto EXIT1;
+			ret = EXIT_FAILURE;
+		} else if (!f) {
+			ret = EXIT_FAILURE;
 		} else if (WIFEXITED(r)) {
 			ret = WEXITSTATUS(r);
 		} else if (WIFSIGNALED(r)) {
