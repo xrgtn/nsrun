@@ -921,7 +921,7 @@ RUNNER:
 				r = wstatus;
 				f = 1;
 			};
-		} while (wpid != -1 || errno == EINTR);
+		} while (!(wpid == -1 && errno != EINTR));
 		if (wpid == -1 && errno != ECHILD) {
 			/* ECHILD: The calling process has no existing
 			 * unwaited-for child processes.
