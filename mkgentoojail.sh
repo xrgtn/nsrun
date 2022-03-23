@@ -29,7 +29,7 @@
 
 # Default Gentoo arch/profile:
 ARCH="amd64"
-PROF="hardened-nomultilib-selinux-openrc"
+PROF="amd64-hardened-nomultilib-selinux-openrc"
 # Default Gentoo download server:
 # DSRV="https://distfiles.gentoo.org"
 DSRV="https://bouncer.gentoo.org/fetch/root/all"
@@ -277,7 +277,7 @@ mkjail() {
 	#   # ts=1647799203
 	#   20220315T091810Z/stage3-amd64-hardened-nomultilib-selinux-openrc-20220315T091810Z.tar.xz 221397584
 	wget -O "$TDIR/STAGE3.txt" \
-		"$DSRV"/releases/"$ARCH"/autobuilds/latest-stage3-"$ARCH"-"$PROF".txt \
+		"$DSRV"/releases/"$ARCH"/autobuilds/latest-stage3-"$PROF".txt \
 		|| die
 
 	# Find filename/URL of latest stage3-xxx.tar.xz:
@@ -285,7 +285,7 @@ mkjail() {
 	while read A B; do
 		case "z$A" in
 		z"#"*)	continue;;
-		z*stage3*"$ARCH"-"$PROF"*.tar.xz)
+		z*stage3*"$PROF"*.tar.xz)
 			TXZ="$A"
 			break;;
 		esac

@@ -5,12 +5,13 @@
 			 * write(), close(), fork(), chdir(), chroot(),
 			 * getgroups(), sethostname(), STDIN_FILENO */
 #include <stdlib.h>	/* getenv(), setenv(), malloc(), free() */
-#include <stdio.h>	/* printf(), fprintf(), asprintf(), vasprintf() */
+#include <stdio.h>	/* printf(), fprintf(), asprintf(), vasprintf(),
+			 * stderr, stdout */
 #include <stdarg.h>	/* va_list, va_start(), va_end() */
 #include <errno.h>	/* errno, ENOTTY */
 #include <sys/mount.h>	/* mount(), umount2(), MS_REC, MS_SLAVE, MS_PRIVATE,
 			 * MNT_DETACH, MS_NODEV, MS_NOEXEC, MS_NOSUID */
-#include <sys/wait.h>	/* waitpid() */
+#include <sys/wait.h>	/* wait(), waitpid(), WIFxxxx() */
 #include <fcntl.h>	/* open(), O_RDONLY, O_WRONLY, O_CREAT, O_TRUNC */
 #include <sched.h>	/* setns(), CLONE_NEWxxx, unshare() */
 #ifndef CLONE_NEWTIME
