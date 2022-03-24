@@ -274,6 +274,7 @@ mkjail() {
 	DSRV="$5"
 	JUSR="$6"
 	JUID="$7"
+	APP="$8"
 	expr match "$JUSR" '[a-zA-Z_][a-zA-Z0-9_]*$' >/dev/null \
 		|| die "invalid user name: $JUSR"
 	expr match "$JUID" '[0-9][0-9]*$' >/dev/null \
@@ -333,7 +334,7 @@ EOF
 	mkdev ./
 
 	# Do minimal necessary configuration of portage in jail:
-	case "z$7" in
+	case "z$APP" in
 	zfirefox*)
 		cat >"$JAIL/etc/portage/package.use/local.use" <<EOF || die
 media-libs/libglvnd	X
@@ -366,6 +367,11 @@ media-video/ffmpeg	opus
 sys-libs/zlib		minizip
 x11-libs/cairo		X
 x11-libs/libxkbcommon	X
+EOF
+		case "z$ARCH" in zx86)
+			cat >>"$JAIL/etc/portage/package.use/local.use" \
+				<<EOF || die
+dev-lang/rust		cpu_flags_x86_sse2
 EOF
 		;;
 	esac
@@ -437,7 +443,7 @@ EOF
 	fi
 
 	# Emerge firefox/telegram in jail:
-	case "z$7" in
+	case "z$APP" in
 	zfirefox*)
 		nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
 			/usr/bin/emerge -av www-client/firefox
