@@ -27,8 +27,8 @@
 #    /var/cache/distfiles (and optionally /var/cache/binpkgs and /usr/src) will
 #    be bind mounted from the outer system.
 
-# Default Gentoo download server:
-# DSRV="https://distfiles.gentoo.org"
+# Default Gentoo download server and mirror:
+SRV0="https://distfiles.gentoo.org"
 DSRV="https://bouncer.gentoo.org/fetch/root/all"
 # Default inmate user name and uid:
 JUSR="foobar"
@@ -180,18 +180,6 @@ esac
 if ! [ -e "$1" ]; then die "$1 does not exist"; fi
 if ! [ -d "$1" ]; then die "$1 is not a directory"; fi
 
-# Create safe tmp directory and ensure its autoremoval on exit:
-TDIR="/tmp/tmp-mkgentoojail-$$"
-if ! mkdir -m 0750 "$TDIR" ; then
-    E="$?"
-    echo "ERROR: mkdir $TDIR" 1>&2
-    exit "$E"
-fi
-rm_rf_tdir() {
-    rm -rf "$TDIR"
-}
-trap rm_rf_tdir EXIT
-
 # USAGE: chdir_jail path/to/jail
 #
 # on return:
@@ -272,9 +260,9 @@ umount_jail_var() {
 	rm -rf /var/tmp/portage-"$JNAM"
 }
 
-# USAGE: mkjail path/to/jail ARCH ST3V DSRV JUSR JUID firefox
-#    or  mkjail path/to/jail ARCH ST3V DSRV JUSR JUID telegram
-#    or  mkjail path/to/jail ARCH ST3V DSRV JUSR JUID
+# USAGE: mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR JUID firefox
+#    or  mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR JUID telegram
+#    or  mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR JUID
 mkjail() {
 	chdir_jail "$1"
 	[ "z$JAIL" != "z" ] || die
@@ -282,9 +270,10 @@ mkjail() {
 	[ "z$JNET" != "z" ] || die
 	ARCH="$2"
 	ST3V="$3"
-	DSRV="$4"
-	JUSR="$5"
-	JUID="$6"
+	SRV0="$4"
+	DSRV="$5"
+	JUSR="$6"
+	JUID="$7"
 	expr match "$JUSR" '[a-zA-Z_][a-zA-Z0-9_]*$' >/dev/null \
 		|| die "invalid user name: $JUSR"
 	expr match "$JUID" '[0-9][0-9]*$' >/dev/null \
@@ -298,9 +287,9 @@ mkjail() {
 	#   # Latest as of Sun, 20 Mar 2022 18:00:03 +0000
 	#   # ts=1647799203
 	#   20220315T091810Z/stage3-amd64-hardened-nomultilib-selinux-openrc-20220315T091810Z.tar.xz 221397584
-	wget -O "$TDIR/STAGE3.txt" \
-		"$DSRV"/releases/"$ARCH"/autobuilds/latest-stage3-"$ST3V".txt \
-		|| die
+	LST3=`wget -O- \
+		"$SRV0"/releases/"$ARCH"/autobuilds/latest-stage3-"$ST3V".txt`
+	[ "z$?" = "z0" ] || die
 
 	# Find filename/URL of latest stage3-xxx.tar.xz:
 	TXZ=""
@@ -311,7 +300,9 @@ mkjail() {
 			TXZ="$A"
 			break;;
 		esac
-	done <"$TDIR/STAGE3.txt"
+	done <<EOF
+$LST3
+EOF
 	[ "z$TXZ" != "z" ] || die "cannot find latest stage3 tar.xz"
 
 	# Basename of tar.xz:
@@ -541,7 +532,7 @@ enter_jail_as_root() {
 
 case "z$2" in
 z|zcreate|zfirefox|ztelegram*)
-	mkjail "$1" "$ARCH" "$ST3V" "$DSRV" "$JUSR" "$JUID" "$2"
+	mkjail "$1" "$ARCH" "$ST3V" "$SRV0" "$DSRV" "$JUSR" "$JUID" "$2"
 	;;
 zupdate)
 	update_jail "$1"
