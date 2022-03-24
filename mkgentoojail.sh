@@ -27,9 +27,6 @@
 #    /var/cache/distfiles (and optionally /var/cache/binpkgs and /usr/src) will
 #    be bind mounted from the outer system.
 
-# Default Gentoo arch/profile:
-ARCH="amd64"
-PROF="amd64-hardened-nomultilib-selinux-openrc"
 # Default Gentoo download server:
 # DSRV="https://distfiles.gentoo.org"
 DSRV="https://bouncer.gentoo.org/fetch/root/all"
@@ -52,6 +49,31 @@ die() {
     fi
     exit "$E"
 }
+
+# Derive ARCH and ST3V from current Gentoo profile:
+PROF=`readlink /etc/portage/make.profile`
+case "z$PROF" in
+z*/x86/*/selinux*)
+	ARCH="x86"
+	ST3V="i686-hardened-selinux-openrc"
+	;;
+z*/x86/*)
+	ARCH="x86"
+	ST3V="i686-hardened-openrc"
+	;;
+z*/amd64/*/selinux*)
+	ARCH="amd64"
+	ST3V="amd64-hardened-nomultilib-selinux-openrc"
+	;;
+z*/amd64/*)
+	ARCH="amd64"
+	ST3V="amd64-hardened-nomultilib-openrc"
+	;;
+z?*)	die "unsupported ARCH/PROF: $PROF"
+	;;
+z)	die
+	;;
+esac
 
 # USAGE: chmod_chown FILENAME MODE OWNER
 chmod_chown() {
@@ -250,16 +272,16 @@ umount_jail_var() {
 	rm -rf /var/tmp/portage-"$JNAM"
 }
 
-# USAGE: mkjail path/to/jail ARCH PROF DSRV JUSR JUID firefox
-#    or  mkjail path/to/jail ARCH PROF DSRV JUSR JUID telegram
-#    or  mkjail path/to/jail ARCH PROF DSRV JUSR JUID
+# USAGE: mkjail path/to/jail ARCH ST3V DSRV JUSR JUID firefox
+#    or  mkjail path/to/jail ARCH ST3V DSRV JUSR JUID telegram
+#    or  mkjail path/to/jail ARCH ST3V DSRV JUSR JUID
 mkjail() {
 	chdir_jail "$1"
 	[ "z$JAIL" != "z" ] || die
 	[ "z$JNAM" != "z" ] || die
 	[ "z$JNET" != "z" ] || die
 	ARCH="$2"
-	PROF="$3"
+	ST3V="$3"
 	DSRV="$4"
 	JUSR="$5"
 	JUID="$6"
@@ -277,7 +299,7 @@ mkjail() {
 	#   # ts=1647799203
 	#   20220315T091810Z/stage3-amd64-hardened-nomultilib-selinux-openrc-20220315T091810Z.tar.xz 221397584
 	wget -O "$TDIR/STAGE3.txt" \
-		"$DSRV"/releases/"$ARCH"/autobuilds/latest-stage3-"$PROF".txt \
+		"$DSRV"/releases/"$ARCH"/autobuilds/latest-stage3-"$ST3V".txt \
 		|| die
 
 	# Find filename/URL of latest stage3-xxx.tar.xz:
@@ -285,7 +307,7 @@ mkjail() {
 	while read A B; do
 		case "z$A" in
 		z"#"*)	continue;;
-		z*stage3*"$PROF"*.tar.xz)
+		z*stage3*"$ST3V"*.tar.xz)
 			TXZ="$A"
 			break;;
 		esac
@@ -327,6 +349,13 @@ media-libs/libglvnd	X
 media-libs/libvpx	postproc
 x11-libs/cairo		X
 EOF
+		case "z$ARCH" in zx86)
+			cat >>"$JAIL/etc/portage/package.use/local.use" \
+				<<EOF || die
+dev-lang/rust		cpu_flags_x86_sse2
+EOF
+			;;
+		esac
 		;;
 	ztelegram*)
 		cat >"$JAIL/etc/portage/package.use/local.use" <<EOF || die
@@ -512,7 +541,7 @@ enter_jail_as_root() {
 
 case "z$2" in
 z|zcreate|zfirefox|ztelegram*)
-	mkjail "$1" "$ARCH" "$PROF" "$DSRV" "$JUSR" "$JUID" "$2"
+	mkjail "$1" "$ARCH" "$ST3V" "$DSRV" "$JUSR" "$JUID" "$2"
 	;;
 zupdate)
 	update_jail "$1"
