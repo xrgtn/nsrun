@@ -112,17 +112,17 @@ mkdev() {
 				rm -f "$F2" || die "cannot rm $F2";
 			fi
 			mkdir_1 "$F2"
-			ln -s "$D" "$F2"
+			ln -s "$D" "$F2" || die
 			;;
 		znod)	if [ -h "$F2" ]; then rm -f "$F2" || die; fi
 			if [ -d "$F2" ]; then rmdir "$F2" || die; fi
 			if [ -e "$F2" ]; then rm -f "$F2" || die; fi
 			mkdir_1 "$F2"
 			case "z$C" in
-			z[bcu])	mknod "$F2" "$C" "$D" "$E"
+			z[bcu])	mknod "$F2" "$C" "$D" "$E" || die
 				chmod_chown "$F2" "$F" "$G"
 				;;
-			z[p])	mknod "$F2" "$C"
+			z[p])	mknod "$F2" "$C" || die
 				chmod_chown "$F2" "$D" "$E"
 				;;
 			z*)	die "ERROR: unknown node type '$C' for $F2";;
@@ -313,32 +313,32 @@ mkjail() {
 		|| die
 
 	# Remove dev subdirectory and re-create it from scratch:
-	rm -rf ./dev || die
+	if [ -e ./dev ]; then
+		rm -rf ./dev || die
+	fi
 	printf 'Re-creating minimal %s\n' "$JAIL/dev"
 	mkdev ./
 
 	# Do minimal necessary configuration of portage in jail:
 	case "z$7" in
 	zfirefox*)
-		cat >"$JAIL/etc/portage/package.use/local.use" <<EOF
+		cat >"$JAIL/etc/portage/package.use/local.use" <<EOF || die
 media-libs/libglvnd	X
 media-libs/libvpx	postproc
 x11-libs/cairo		X
 EOF
 		;;
 	ztelegram*)
-		cat >"$JAIL/etc/portage/package.use/local.use" <<EOF
+		cat >"$JAIL/etc/portage/package.use/local.use" <<EOF || die
 dev-qt/qtgui		dbus jpeg
 media-libs/libglvnd	X
 media-video/ffmpeg	opus
 sys-libs/zlib		minizip
 x11-libs/libxkbcommon	X
 EOF
-		nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
-			/usr/bin/emerge -av net-im/telegram-desktop
 		;;
 	z*)	# both:
-		cat >"$JAIL/etc/portage/package.use/local.use" <<EOF
+		cat >"$JAIL/etc/portage/package.use/local.use" <<EOF || die
 dev-qt/qtgui		dbus jpeg
 media-libs/libglvnd	X
 media-libs/libvpx	postproc
@@ -350,7 +350,7 @@ EOF
 		;;
 	esac
 	if [ -d "/var/db/repos/gentoo" ]; then
-		cat >"$JAIL/etc/portage/repos.conf" <<EOF
+		cat >"$JAIL/etc/portage/repos.conf" <<EOF || die
 [DEFAULT]
 main-repo = gentoo
 
@@ -376,18 +376,20 @@ EOF
 	fi
 
 	# Generate C.UTF-8, en_US and en_US.UTF8 locales:
-	cat >>"$JAIL/etc/locale.gen" <<EOF
+	cat >>"$JAIL/etc/locale.gen" <<EOF || die
 en_US		ISO-8859-1
 en_US.UTF-8	UTF-8
 EOF
-	locale-gen -d "$JAIL/" -c "$JAIL/etc/locale.gen"
+	locale-gen -d "$JAIL/" -c "$JAIL/etc/locale.gen" || die
 
 	# Set UTC as localtime (to avoid leaking local timezone to firefox):
-	rm -f "$JAIL/etc/localtime"
-	ln -s ../usr/share/zoneinfo/UTC "$JAIL/etc/localtime"
+	if [ -e "$JAIL/etc/localtime" ]; then
+		rm -f "$JAIL/etc/localtime" || die
+	fi
+	ln -s ../usr/share/zoneinfo/UTC "$JAIL/etc/localtime" || die
 
 	# Generate .inputrc for jail users (optional):
-	cat >"$JAIL/root/.inputrc" <<'EOF'
+	cat >"$JAIL/root/.inputrc" <<'EOF' || die
 $include /etc/inputrc
 # alternate mappings for "up" and "down" to search the history
 "\e[A": history-search-backward
@@ -395,21 +397,24 @@ $include /etc/inputrc
 "\e[B": history-search-forward
 "\eOB": history-search-forward
 EOF
-	cp -pr "$JAIL/root/.inputrc" "$JAIL/etc/skel/.inputrc"
+	cp -pr "$JAIL/root/.inputrc" "$JAIL/etc/skel/.inputrc" || die
 
 	# Create inmate user/group in jail:
-	groupadd -R "$JAIL"            -g "$JUID" "$JUSR"
-	useradd  -R "$JAIL" -u "$JUID" -g "$JUID" "$JUSR"
+	groupadd -R "$JAIL"            -g "$JUID" "$JUSR" || die
+	useradd  -R "$JAIL" -u "$JUID" -g "$JUID" "$JUSR" || die
 
 	# Create /etc/resolv.conf in jail:
-	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf"
+	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf" || die
 
 	# Mount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
 	mount_jail_var "$JAIL" "$JNAM"
 
 	# Set jail's locale:
-	nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
-		/usr/bin/eselect locale set C.UTF8
+	if ! nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
+			/usr/bin/eselect locale set C.UTF8; then
+		umount_jail_var "$JAIL" "$JNAM"
+		die
+	fi
 
 	# Emerge firefox/telegram in jail:
 	case "z$7" in
@@ -435,7 +440,7 @@ update_jail() {
 	[ "z$JNET" != "z" ] || die
 
 	# Update /etc/resolv.conf in jail:
-	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf"
+	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf" || die
 
 	# Mount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
 	mount_jail_var "$JAIL" "$JNAM"
@@ -462,7 +467,7 @@ enter_jail() {
 		|| die "invalid uid: $JUID"
 
 	# Update /etc/resolv.conf in jail:
-	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf"
+	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf" || die
 
 	# Transfer X11 MIT-MAGIC-COOKIE to JUSR:
 	XDMAUTHD="/var/lib/xdm/authdir/authfiles/"
@@ -473,9 +478,9 @@ enter_jail() {
 	zroot)	JXAUTH="$JAIL/root/.Xauthority";;
 	z*)	JXAUTH="$JAIL/home/$JUSR/.Xauthority";;
 	esac
-	true >"$JXAUTH"
-	xauth -f "$JXAUTH" add "$JNET.1:0" . "$MITMACOO"
-	chown "$JUID:$JUID" "$JXAUTH"
+	true >"$JXAUTH" || die
+	xauth -f "$JXAUTH" add "$JNET.1:0" . "$MITMACOO" || die
+	chown "$JUID:$JUID" "$JXAUTH" || die
 
 	# Enter as JUSR:
 	nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
@@ -491,7 +496,7 @@ enter_jail_as_root() {
 	[ "z$JNET" != "z" ] || die
 
 	# Update /etc/resolv.conf in jail:
-	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf"
+	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf" || die
 
 	# Entering as root is usually done for manual emerge/eselect etc,
 	# therefore we need /var/db/repos and other mounts:
