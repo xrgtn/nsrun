@@ -380,7 +380,7 @@ EOF
 en_US		ISO-8859-1
 en_US.UTF-8	UTF-8
 EOF
-	locale-gen -d "$JAIL" -c "$JAIL/etc/locale.gen"
+	locale-gen -d "$JAIL/" -c "$JAIL/etc/locale.gen"
 
 	# Set UTC as localtime (to avoid leaking local timezone to firefox):
 	rm -f "$JAIL/etc/localtime"
