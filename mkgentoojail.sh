@@ -185,7 +185,7 @@ if ! [ -d "$1" ]; then die "$1 is not a directory"; fi
 # on return:
 #	JAIL	- /abs/path/to/jail
 #	JNAME	- jail_basename
-#	JNET    - 192.168.X (0 <= X <= 255)
+#	JNET    - 0 <= JNET <= 255, (192.168.JNET.0/24)
 chdir_jail() {
 	# Change to jail directory and get its absname:
 	cd "$1" || die
@@ -209,7 +209,9 @@ chdir_jail() {
 	if [ "$X" -gt 255 ]; then
 		die "invalid JNET: 192.168.$X.0/24";
 	fi
-	JNET="192.168.$X"
+	JNET="$X"
+	printf '%s: using 192.168.%s.0/24 network and ns%s for %s\n' \
+		"$0" "$JNET" "$JNET" "$JAIL"
 
 	# Unmount jail subdirectories/submounts:
 	while read A B C; do
@@ -435,13 +437,14 @@ EOF
 	useradd  -R "$JAIL" -u "$JUID" -g "$JUID" "$JUSR" || die
 
 	# Create /etc/resolv.conf in jail:
-	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf" || die
+	printf 'nameserver %s\n' "192.168.$JNET.1" \
+		>"$JAIL/etc/resolv.conf" || die
 
 	# Mount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
 	mount_jail_var "$JAIL" "$JNAM"
 
 	# Set jail's locale:
-	if ! nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
+	if ! nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
 			/usr/bin/eselect locale set C.UTF8; then
 		umount_jail_var "$JAIL" "$JNAM"
 		die
@@ -450,11 +453,11 @@ EOF
 	# Emerge firefox/telegram in jail:
 	case "z$APP" in
 	zfirefox*)
-		nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
+		nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
 			/usr/bin/emerge -av www-client/firefox
 		;;
 	ztelegram*)
-		nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
+		nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
 			/usr/bin/emerge -av net-im/telegram-desktop
 		;;
 	esac
@@ -471,13 +474,14 @@ update_jail() {
 	[ "z$JNET" != "z" ] || die
 
 	# Update /etc/resolv.conf in jail:
-	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf" || die
+	printf 'nameserver %s\n' "192.168.$JNET.1" \
+		>"$JAIL/etc/resolv.conf" || die
 
 	# Mount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
 	mount_jail_var "$JAIL" "$JNAM"
 
 	# Do updates (emerge --update --deep --newuse @world):
-	nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
+	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
 		/usr/bin/emerge -vuDN @world
 
 	# Umount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
@@ -498,7 +502,8 @@ enter_jail() {
 		|| die "invalid uid: $JUID"
 
 	# Update /etc/resolv.conf in jail:
-	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf" || die
+	printf 'nameserver %s\n' "192.168.$JNET.1" \
+		>"$JAIL/etc/resolv.conf" || die
 
 	# Transfer X11 MIT-MAGIC-COOKIE to JUSR:
 	XDMAUTHD="/var/lib/xdm/authdir/authfiles/"
@@ -510,12 +515,12 @@ enter_jail() {
 	z*)	JXAUTH="$JAIL/home/$JUSR/.Xauthority";;
 	esac
 	true >"$JXAUTH" || die
-	xauth -f "$JXAUTH" add "$JNET.1:0" . "$MITMACOO" || die
+	xauth -f "$JXAUTH" add "192.168.$JNET.1:0" . "$MITMACOO" || die
 	chown "$JUID:$JUID" "$JXAUTH" || die
 
 	# Enter as JUSR:
-	nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
-		-P="DISPLAY=$JNET.1:0" \
+	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
+		-P="DISPLAY=192.168.$JNET.1:0" \
 		/bin/su -w DISPLAY -Pl "$JUSR"
 }
 
@@ -527,14 +532,15 @@ enter_jail_as_root() {
 	[ "z$JNET" != "z" ] || die
 
 	# Update /etc/resolv.conf in jail:
-	printf 'nameserver %s\n' "$JNET.1" >"$JAIL/etc/resolv.conf" || die
+	printf 'nameserver %s\n' "192.168.$JNET.1" \
+		>"$JAIL/etc/resolv.conf" || die
 
 	# Entering as root is usually done for manual emerge/eselect etc,
 	# therefore we need /var/db/repos and other mounts:
 	mount_jail_var "$JAIL" "$JNAM"
 
 	# Enter as root:
-	nsrun -impuCTn=/run/netns/ns0 -r="$JAIL" -P="LANG=C.UTF-8" \
+	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
 		/bin/su -Pl "root"
 
 	# Umount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
