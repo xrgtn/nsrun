@@ -345,6 +345,7 @@ EOF
 			cat >>"$JAIL/etc/portage/package.use/local.use" \
 				<<EOF || die
 dev-lang/rust		cpu_flags_x86_sse2
+net-libs/nodejs		cpu_flags_x86_sse2
 EOF
 			;;
 		esac
@@ -372,9 +373,13 @@ EOF
 			cat >>"$JAIL/etc/portage/package.use/local.use" \
 				<<EOF || die
 dev-lang/rust		cpu_flags_x86_sse2
+net-libs/nodejs		cpu_flags_x86_sse2
 EOF
+			;;
+		esac
 		;;
 	esac
+
 	if [ -d "/var/db/repos/gentoo" ]; then
 		cat >"$JAIL/etc/portage/repos.conf" <<EOF || die
 [DEFAULT]
