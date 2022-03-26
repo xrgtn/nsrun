@@ -39,7 +39,6 @@
 int sigpipefd[2] = {-1, -1};
 const int sigv[] = {SIGCHLD, SIGWINCH, SIGALRM, SIGTERM, SIGINT, SIGQUIT};
 const int sigc = sizeof(sigv) / sizeof(*sigv);
-pid_t pid2 = -1;
 
 void sigpipewriter(int sig, siginfo_t *info, void *ucontext) {
 	unsigned char b;
@@ -60,26 +59,15 @@ void sigpipewriter(int sig, siginfo_t *info, void *ucontext) {
 		b = 5;
 		break;
 	case SIGCHLD:
-		/* XXX: there's a race condition with setting global pid2 and
-		 * retrieving it in sighandler. Let's assume this sequence of
-		 * events:
-		 * 1. sigpipewriter established at SIGCHLD
-		 * 2. fork() is called
-		 * 3. fork() returns first in child process
-		 * 4. child process executes and terminates
-		 * 5. sigpipewriter() is called with SIGCHLD in parent process
-		 *    and reads -1 from pid2
-		 * 6. fork() returns in parent process and parent writes
-		 *    child pid to pid2
-		 */
-		b = info->si_pid == pid2 ? 6 : 13;
 		switch (info->si_code) {
-		case CLD_EXITED:	b += 1; break;
-		case CLD_KILLED:	b += 2; break;
-		case CLD_DUMPED:	b += 3; break;
-		case CLD_TRAPPED:	b += 4; break;
-		case CLD_STOPPED:	b += 5; break;
-		case CLD_CONTINUED:	b += 6; break;
+		case CLD_EXITED:
+		case CLD_KILLED:
+		case CLD_DUMPED:
+			b = 6;
+			break;
+		default:
+			b = 0;
+			break;
 		};
 		break;
 	};
@@ -259,6 +247,7 @@ int main(int argc, char *argv[]) {
 	uid_t u = getuid();
 	gid_t g = getgid();
 	struct sigaction sa, sa0;
+	pid_t pid2;
 
 	/* Open/init pty master: */
 	ptmxfd = open_ptmx(&ptsfn, &stdin_tty, &tios0, &winsz0);
