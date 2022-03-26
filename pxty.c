@@ -1,3 +1,7 @@
+/*!
+ * Temporary prototype code for pty proxy (a la `su -P`).
+ */
+
 #define _XOPEN_SOURCE	600	/* posix_openpt(), grantpt(), unlockpt(),
 				 * ptsname() */
 #define _POSIX_C_SOURCE	199309L	/* sigaction(), siginfo_t */
@@ -37,7 +41,7 @@ const int sigv[] = {SIGCHLD, SIGWINCH, SIGALRM, SIGTERM, SIGINT, SIGQUIT};
 const int sigc = sizeof(sigv) / sizeof(*sigv);
 pid_t pid2 = -1;
 
-void pipewriter(int sig, siginfo_t *info, void *ucontext) {
+void sigpipewriter(int sig, siginfo_t *info, void *ucontext) {
 	unsigned char b;
 	switch (sig) {
 	case SIGWINCH:
@@ -56,6 +60,18 @@ void pipewriter(int sig, siginfo_t *info, void *ucontext) {
 		b = 5;
 		break;
 	case SIGCHLD:
+		/* XXX: there's a race condition with setting global pid2 and
+		 * retrieving it in sighandler. Let's assume this sequence of
+		 * events:
+		 * 1. sigpipewriter established at SIGCHLD
+		 * 2. fork() is called
+		 * 3. fork() returns first in child process
+		 * 4. child process executes and terminates
+		 * 5. sigpipewriter() is called with SIGCHLD in parent process
+		 *    and reads -1 from pid2
+		 * 6. fork() returns in parent process and parent writes
+		 *    child pid to pid2
+		 */
 		b = info->si_pid == pid2 ? 6 : 13;
 		switch (info->si_code) {
 		case CLD_EXITED:	b += 1; break;
@@ -269,7 +285,7 @@ int main(int argc, char *argv[]) {
 	/* Set CHLD, WINCH, ALRM, TERM, INT, QUIT signal handler: */
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_flags = SA_SIGINFO;
-	sa.sa_sigaction = &pipewriter;
+	sa.sa_sigaction = &sigpipewriter;
 	for (int i = 0; i < sigc; i++) {
 		if (sigaction(sigv[i], &sa, &sa0) == -1) {
 			warn("sigaction SIG_%i: %m\n", sigv[i]);
