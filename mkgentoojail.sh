@@ -211,7 +211,7 @@ chdir_jail() {
 	fi
 	JNET="$X"
 	printf '%s: using 192.168.%s.0/24 network and ns%s for %s\n' \
-		"$0" "$JNET" "$JNET" "$JAIL"
+		"${0##*/}" "$JNET" "$JNET" "$JAIL"
 
 	# Unmount jail subdirectories/submounts:
 	while read A B C; do
@@ -561,7 +561,7 @@ zroot)
 	enter_jail_as_root "$1"
 	;;
 z*)
-	die "USAGE: $0 /path/to/jail {create|firefox|telegram|update|enter}"
+	die "USAGE: ${0##*/}/path/to/jail {create|firefox|telegram|update|enter}"
 	;;
 esac
 
