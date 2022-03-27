@@ -171,6 +171,20 @@ EXIT2:	if (close(ptmxfd) == -1)
 EXIT1:	return -1;
 };
 
+/*!
+ * Open specified tty device file \p ptsfn, change its owner to \p u:g and mode
+ * to 0600, initialize attrs/winsize if \p tios/winsz is not NULL, start new
+ * terminal session, set \p ptsfn as controlling terminal and reopen
+ * stdin/out/err to it.
+ *
+ * \param	ptsfn	tty defice filename
+ * \param	u	uid to set as tty owner user
+ * \param	g	gid to set as tty owner group
+ * \param	tios	attrs to initialize tty (if not NULL)
+ * \param	winsz	winsize to initialize tty (if not NULL)
+ *
+ * \return	0 on success, -1 on error.
+ */
 int open_pts(char *ptsfn, uid_t u, gid_t g,
 		const struct termios *tios, const struct winsize *winsz) {
 	int ptsfd;
