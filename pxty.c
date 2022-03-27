@@ -343,7 +343,7 @@ int get_tty_params(int fd, struct termios *tios, struct winsize *winsz) {
 		errno = EINVAL;
 		return -1;
 	};
-	if (ioctl(STDIN_FILENO, TIOCGWINSZ, winsz) == -1) {
+	if (ioctl(fd, TIOCGWINSZ, winsz) == -1) {
 		warn("get winsize(%i): %m\n", fd);
 		return -1;
 	};
