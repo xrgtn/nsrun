@@ -302,7 +302,7 @@ int main(int argc, char *argv[]) {
 		restore_sigaction_dfl();
 		close_sigpipefd(sigpipefd);
 
-		/* Open/chown/set_std slave pty: */
+		/* Open/chown/setup slave pty: */
 		if (open_pts(ptsfn, u, 5, stdin_tty ? &tios0 : NULL,
 				stdin_tty ? &winsz0 : NULL) == -1)
 			goto CXIT1;
