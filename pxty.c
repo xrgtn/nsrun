@@ -104,42 +104,21 @@ int waitall(pid_t child_pid) {
 };
 
 /*!
- * Get ISTTY flag, attrs and winsize of stdin, open pty master device, do
- * grantpt(), unlockpt() and get pty slave name.
+ * \bief	Open and setup pseudo-terminal master device.
+ *
+ * Open pty master device, do grantpt(), unlockpt() and get slave
+ * pseudo-terminal device name.
  *
  * \param[out]	ptsfn		char pointer to receive slave pty device name
- * \param[out]	stdin_tty	stdin's ISTTY flag. Possible values: 1 (stdin
- *				is a tty), 0 (ENOTTY) or unchanged on errors
- *				other than ENOTTY
- * \param[out]	tios0		stdin's attrs (termios). Only valid if stdin is
- *				a tty.
- * \param[out]	winsz0		stdin's winsize. Only valid if stdin is	a tty.
  *
  * \return	open file descriptor of pty master device (/dev/ptmx) on
  *		success, -1 on error.
  */
-int open_ptmx(char **ptsfn, int *stdin_tty,
-		struct termios *tios0, struct winsize *winsz0) {
+int open_ptmx(char **ptsfn) {
 	int ptmxfd;
 	char *p;
-	if (ptsfn == NULL || stdin_tty == NULL
-			|| tios0 == NULL || winsz0 == NULL)
+	if (ptsfn == NULL)
 		goto EXIT1;
-
-	/* Get original tty settings of stdin: */
-	if (tcgetattr(STDIN_FILENO, tios0) == 0) {
-		*stdin_tty = 1;
-	} else if (errno == ENOTTY) {
-		*stdin_tty = 0;
-	} else {
-		warn("tcgetattr(stdin): %m\n");
-		goto EXIT1;
-	};
-	/* Get stdin's WINSZ, if *stdin_tty: */
-	if (*stdin_tty && ioctl(STDIN_FILENO, TIOCGWINSZ, winsz0) == -1) {
-		warn("get WINSZ (stdin): %m\n");
-		goto EXIT1;
-	};
 
 	/* Open /dev/ptmx The-POSIX-Way: */
 	ptmxfd = posix_openpt(O_RDWR | O_NOCTTY);
@@ -264,6 +243,41 @@ void close_sigpipefd(int sigpipefd[2]) {
 	};
 };
 
+/*!
+ * Get tty attrs and winsize of \p fd.
+ *
+ * \param[in]	fd	file descriptor
+ * \param[out]	tios	fd tty attrs (termios).
+ * \param[out]	winsz	fd tty winsize.
+ *
+ * \return	1 on success, 0 if fd is not a tty, -1 on error.
+ */
+int get_tty_params(int fd, struct termios *tios, struct winsize *winsz) {
+	/* Get current tty attrs of fd: */
+	if (tios == NULL) {
+		errno = EINVAL;
+		return -1;
+	};
+	if (tcgetattr(fd, tios) == -1) {
+		if (errno == ENOTTY) {
+			return 0;
+		} else {
+			warn("tcgetattr(%i): %m\n", fd);
+			return -1;
+		};
+	};
+	/* Get current winsize of fd: */
+	if (winsz == NULL) {
+		errno = EINVAL;
+		return -1;
+	};
+	if (ioctl(STDIN_FILENO, TIOCGWINSZ, winsz) == -1) {
+		warn("get winsize(%i): %m\n", fd);
+		return -1;
+	};
+	return 1;
+};
+
 int main(int argc, char *argv[]) {
 	int ret = EXIT_FAILURE;
 	int ptmxfd;
@@ -276,8 +290,13 @@ int main(int argc, char *argv[]) {
 	struct sigaction sa, sa0;
 	pid_t pid2;
 
+	/* Get STDIN's tty params: */
+	stdin_tty = get_tty_params(STDIN_FILENO, &tios0, &winsz0);
+	if (stdin_tty == -1)
+		goto EXIT0;
+
 	/* Open/init pty master: */
-	ptmxfd = open_ptmx(&ptsfn, &stdin_tty, &tios0, &winsz0);
+	ptmxfd = open_ptmx(&ptsfn);
 	if (ptmxfd == 1)
 		goto EXIT0;
 	fprintf(stderr, "pts: %s\n", ptsfn);
