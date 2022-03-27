@@ -26,7 +26,8 @@
 				 * WIFSIGNALED(), WTERMSIG() */
 #include <fcntl.h>		/* fcntl(), F_SETFL, O_NONBLOCK */
 #include <sys/ioctl.h>		/* ioctl(), TIOCGWINSZ, TIOCSWINSZ */
-#include <poll.h>		/* poll(), struct pollfd, POLLIN, POLLOUT */
+#include <poll.h>		/* poll(), struct pollfd, nfds_t, POLLIN,
+				 * POLLOUT */
 #include <sys/stat.h>		/* fchmod() */
 #include <signal.h>		/* sigaction(), siginfo_t, SIGCHLD, SIGWINCH,
 				 * SIGALRM, SIGTERM, SIGINT, SIGQUIT,
@@ -54,7 +55,6 @@ struct siginfo_e {
 };
 
 void sigpipewriter(int sig, siginfo_t *info, void *ucontext) {
-	unsigned char b;
 	struct siginfo_e se;
 	ssize_t ssz;
 	se.se_signo	= sig;
