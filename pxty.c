@@ -17,7 +17,7 @@
 #include <errno.h>		/* errno, ENOTTY, EINTR, ECHILD */
 #include <string.h>		/* strdup(), memcpy() */
 #include <termios.h>		/* struct termios, struct winsize,
-				 * tcgetattr(), tcsetattr() */
+				 * tcgetattr(), tcsetattr(), TCSANOW */
 #include <sys/wait.h>		/* wait(), WIFEXITED(), WEXITSTATUS(),
 				 * WIFSIGNALED(), WTERMSIG() */
 #include <fcntl.h>		/* fcntl(), F_SETFL, O_NONBLOCK */
@@ -171,7 +171,8 @@ EXIT2:	if (close(ptmxfd) == -1)
 EXIT1:	return -1;
 };
 
-int open_pts(char *ptsfn, uid_t u, gid_t g) {
+int open_pts(char *ptsfn, uid_t u, gid_t g,
+		const struct termios *tios, const struct winsize *winsz) {
 	int ptsfd;
 	int ret = -1;
 
@@ -187,6 +188,14 @@ int open_pts(char *ptsfn, uid_t u, gid_t g) {
 	};
 	if (fchmod(ptsfd, 0600) == -1) {
 		warn("fchmod(\"%s\", 0600): %m\n", ptsfn);
+		goto EXIT1;
+	};
+	if (tios != NULL && tcsetattr(ptsfd, TCSANOW, tios) == -1) {
+		warn("tcsetattr(\"%s\", ...): %m\n", ptsfn);
+		goto EXIT1;
+	};
+	if (winsz != NULL && ioctl(ptsfd, TIOCSWINSZ, winsz) == -1) {
+		warn("set WINSZ (\"%s\"): %m\n", ptsfn);
 		goto EXIT1;
 	};
 	if (setsid() == (pid_t)-1) {
@@ -294,7 +303,8 @@ int main(int argc, char *argv[]) {
 		close_sigpipefd(sigpipefd);
 
 		/* Open/chown/set_std slave pty: */
-		if (open_pts(ptsfn, u, 5) == -1)
+		if (open_pts(ptsfn, u, 5, stdin_tty ? &tios0 : NULL,
+				stdin_tty ? &winsz0 : NULL) == -1)
 			goto CXIT1;
 
 		fprintf(stdout, "Hello, world!\n");
