@@ -388,7 +388,51 @@ EXIT1:	errno = e;
 
 struct write_buf {
 	char buf[4096];
-	char *p, *e;
+	char *s;	/* occupied part of buf */
+	char *f;	/* free part of buf */
+};
+
+ssize_t read_wb(int fd, struct write_buf *wb) {
+	if (wb == NULL) {
+		errno = EINVAL;
+		return -1;
+	};
+	if (wb->s == NULL)
+		wb->s = wb->buf;
+	if (wb->f == NULL)
+		wb->f = wb->buf;
+	char *buf_end = wb->buf + sizeof(wb->buf);
+	if (wb->f >= buf_end) {
+		errno = EINVAL;
+		return -1;
+	};
+	ssize_t ssz = read(fd, wb->f, buf_end - wb->f);
+	if (ssz < 0)
+		warn("read(%i, ...): %m\n", fd);
+	if (ssz > 0)
+		wb->f += ssz;
+	return ssz;
+};
+
+ssize_t write_wb(int fd, struct write_buf *wb) {
+	if (wb == NULL || wb->s == NULL || wb->f == NULL
+			/* don't permit empty writes (.s == .f): */
+			|| wb->s >= wb->f
+			|| wb->f > wb->buf + sizeof(wb->buf)) {
+		errno = EINVAL;
+		return -1;
+	};
+	ssize_t ssz = write(fd, wb->s, wb->f - wb->s);
+	if (ssz < 0)
+		warn("write(%i, ...): %m\n", fd);
+	if (ssz > 0)
+		wb->s += ssz;
+	/* Reset .s & .f pointers to beginning when all data are written: */
+	if (wb->s == wb->f) {
+		wb->s = wb->buf;
+		wb->f = wb->buf;
+	};
+	return ssz;
 };
 
 /*!
@@ -410,26 +454,29 @@ int pxty_main_loop(int origfd, int ptmxfd, int sigpfd, pid_t child_pid,
 	pid_t wpid;
 	int wst;
 	int r;
+	int child_is_dead = 0;
 	/* Data to be written to origfd: */
-	struct write_buf owb = {.p = NULL, .e = NULL};
+	struct write_buf owb = {.s = NULL, .f = NULL};
 	short oev;
 	/* Data to be written to ptmxfd: */
-	struct write_buf twb = {.p = NULL, .e = NULL};
+	struct write_buf twb = {.s = NULL, .f = NULL};
 	short tev;
 
-	do {
+	/* Loop while child's not dead or we have pending data in write
+	 * buffers: */
+	while (!child_is_dead || owb.s != owb.f || twb.s != twb.f) {
 		/* Indicate events we are interested in and clear previously
 		 * reported events (.revents field): */
 		oev = 0;
 		tev = 0;
 		/* If origfd write buffer is empty, wait for ptmxfd POLLIN,
 		 * otherwise wait for origfd POLLOUT: */
-		if (owb.p == owb.e)
+		if (owb.s == owb.f)
 			tev |= POLLIN;
 		else
 			oev |= POLLOUT;
 		/* Similarly with ptmxfd write buffer: */
-		if (twb.p == twb.e)
+		if (twb.s == twb.f)
 			oev |= POLLIN;
 		else
 			tev |= POLLOUT;
@@ -464,29 +511,48 @@ int pxty_main_loop(int origfd, int ptmxfd, int sigpfd, pid_t child_pid,
 				r = process_sigpfd_in(sigpfd, &wpid, &wst,
 					origfd, ptmxfd, child_pid);
 				if (r == -1) {
+					warn("process_sigpfd_in(): %m\n");
 					goto EXIT1;
 				} else if (r == 1 && wpid == child_pid
 						&& (WIFEXITED(wst)
 						|| WIFSIGNALED(wst))) {
 					if (wstatus != NULL)
 						*wstatus = wst;
-					return 0;
+					child_is_dead = 1;
 				};
 			};
+			ssize_t ssz;
 			if (fds[i].fd == origfd && fds[i].revents & POLLIN) {
-				goto EXIT1;
+				if (read_wb(origfd, &twb) < 0
+						&& errno != EINTR) {
+					warn("read_wb(origfd): %m\n");
+					goto EXIT1;
+				};
 			};
 			if (fds[i].fd == ptmxfd && fds[i].revents & POLLIN) {
-				goto EXIT1;
+				if ((ssz = read_wb(ptmxfd, &owb)) < 0
+						&& errno != EINTR) {
+					warn("read_wb(ptmxfd): %m\n");
+					goto EXIT1;
+				};
 			};
 			if (fds[i].fd == origfd && fds[i].revents & POLLOUT) {
-				goto EXIT1;
+				if ((ssz = write_wb(origfd, &owb)) < 0
+						&& errno != EINTR) {
+					warn("write_wb(origfd): %m\n");
+					goto EXIT1;
+				};
 			};
 			if (fds[i].fd == ptmxfd && fds[i].revents & POLLOUT) {
-				goto EXIT1;
+				if (write_wb(ptmxfd, &twb) < 0
+						&& errno != EINTR) {
+					warn("write_wb(ptmxfd): %m\n");
+					goto EXIT1;
+				};
 			};
 		};
-	} while (1);
+	};
+	return 0;
 
 EXIT1:	kill(child_pid, SIGKILL);
 	return -1;
@@ -513,7 +579,6 @@ int main(int argc, char *argv[]) {
 	ptmxfd = open_ptmx(&ptsfn);
 	if (ptmxfd == 1)
 		goto EXIT0;
-	fprintf(stderr, "pts: %s\n", ptsfn);
 
 	/* Open sigpipefd: */
 	if (open_sigpipe(sigpipefd) == -1)
@@ -550,10 +615,8 @@ int main(int argc, char *argv[]) {
 				stdin_tty ? &winsz0 : NULL) == -1)
 			goto CXIT;
 
-		/*
-		fprintf(stdout, "Hello, world!\n");
+		fprintf(stdout, "Hello, world!\n-- \nWBR, from %s\n", ptsfn);
 		fflush(stdout);
-		*/
 
 		ret = EXIT_SUCCESS;
 CXIT:		free(ptsfn);
