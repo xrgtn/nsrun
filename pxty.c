@@ -236,11 +236,77 @@ void restore_sigaction_dfl(void) {
 	};
 };
 
-void close_sigpipefd(int sigpipefd[2]) {
-	for (int i = 1; i >= 0; i--) {
-		if (close(sigpipefd[i]) == -1)
-			warn("close(sigpipefd[%i]): %m\n", i);
+/*!
+ * Close pair of pipe file descriptors.
+ *
+ * \param	sigpipefd[in]	pointer to array of open pipe's file
+ *				descriptors.
+ *
+ * \return	0 on success, -1 on error
+ */
+int close_sigpipe(int sigpipefd[2]) {
+	int e = 0;
+	if (sigpipefd == NULL) {
+		errno = EINVAL;
+		return -1;
 	};
+	for (int i = 1; i >= 0; i--) {
+		if (close(sigpipefd[i]) == -1) {
+			e = errno;
+			warn("close(sigpipefd[%i]): %m\n", i);
+		};
+	};
+	if (e != 0) {
+		errno = e;
+		return -1;
+	} else {
+		return 0;
+	};
+};
+
+/*!
+ * Open/connect pair of pipe file descriptors, set FD_CLOEXEC flag on both and
+ * O_NONBLOCK on write end of pipe.
+ *
+ * \param	sigpipefd[out]	pointer to array of 2 integers into which
+ *				open file descriptors for read end of pipe
+ *				\c (sigpipefd[0]) and write end of pipe \c
+ *				(sigpipefd[1]) will be stored on success.
+ *
+ * \return	0 on success, -1 on error
+ * \sa		man 2 pipe
+ */
+int open_sigpipe(int sigpipefd[2]) {
+	int e;
+	if (sigpipefd == NULL) {
+		errno = EINVAL;
+		goto EXIT1;
+	};
+	/* Open sigpipefd: */
+	if (pipe(sigpipefd) == -1) {
+		e = errno;
+		warn("pipe(sigpipefd): %m\n");
+		goto EXIT1;
+	};
+	/* Set FD_CLOEXEC and O_NONBLOCK flags: */
+	for (int i = 0; i <= 1; i++) {
+		if (fcntl(sigpipefd[i], F_SETFD, FD_CLOEXEC) == -1) {
+			e = errno;
+			warn("set FD_CLOEXEC on sigpipefd[%i]: %m\n", i);
+			goto EXIT2;
+		};
+	};
+	if (fcntl(sigpipefd[1], F_SETFL, O_NONBLOCK) == -1) {
+		e = errno;
+		warn("set O_NONBLOCK on sigpipefd[1]: %m\n");
+		goto EXIT2;
+	};
+	/* Success: */
+	return 0;
+	/* Error: */
+EXIT2:	(void) close_sigpipe(sigpipefd);
+EXIT1:	errno = e;
+	return -1;
 };
 
 /*!
@@ -302,43 +368,34 @@ int main(int argc, char *argv[]) {
 	fprintf(stderr, "pts: %s\n", ptsfn);
 
 	/* Open sigpipefd: */
-	if (pipe(sigpipefd) == -1) {
-		warn("pipe(sigpipefd): %m\n");
-		goto EXIT2;
-	};
-	for (int i = 0; i <= 1; i++) {
-		if (fcntl(sigpipefd[i], F_SETFD, FD_CLOEXEC) == -1) {
-			warn("set FD_CLOEXEC on sigpipefd[%i]: %m\n", i);
-			goto EXIT3;
-		};
-	};
-	if (fcntl(sigpipefd[1], F_SETFL, O_NONBLOCK) == -1) {
-		warn("set O_NONBLOCK on sigpipefd[1]: %m\n");
-		goto EXIT3;
-	};
+	if (open_sigpipe(sigpipefd) == -1)
+		goto EXIT1;
 
-	/* Set CHLD, WINCH, ALRM, TERM, INT, QUIT signal handler: */
+	/* Set CHLD, WINCH, ALRM, TERM, INT, QUIT etc signal handler: */
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_flags = SA_SIGINFO;
 	sa.sa_sigaction = &sigpipewriter;
 	for (int i = 0; i < sigc; i++) {
 		if (sigaction(sigv[i], &sa, &sa0) == -1) {
 			warn("sigaction SIG_%i: %m\n", sigv[i]);
-			goto EXIT3;
+			goto EXIT2;
 		};
 	};
 
+	/* Do fork: */
 	pid2 = fork();
 	if (pid2 == -1) {
 		warn("fork(): %m\n");
-		goto EXIT3;
-	} else if (pid2 == 0) {
+		goto EXIT2;
+	};
+
+	if (pid2 == 0) {
 		/* child */
 		if (close(ptmxfd) == -1)
 			warn("close(ptmx): %m\n");
 
 		restore_sigaction_dfl();
-		close_sigpipefd(sigpipefd);
+		(void) close_sigpipe(sigpipefd);
 
 		/* Open/chown/setup slave pty: */
 		if (open_pts(ptsfn, u, 5, stdin_tty ? &tios0 : NULL,
@@ -355,13 +412,17 @@ CXIT1:		free(ptsfn);
 		/* parent */
 		free(ptsfn);
 		ret = waitall(pid2);
-		goto EXIT1;
+		restore_sigaction_dfl();
+		(void) close_sigpipe(sigpipefd);
+		if (close(ptmxfd) == -1)
+			warn("close(ptmx): %m\n");
+		return ret;
 	};
 
-EXIT4:	restore_sigaction_dfl();
-EXIT3:	close_sigpipefd(sigpipefd);
-EXIT2:	free(ptsfn);
-EXIT1:	if (close(ptmxfd) == -1)
+EXIT2:	restore_sigaction_dfl();
+	(void) close_sigpipe(sigpipefd);
+EXIT1:	free(ptsfn);
+	if (close(ptmxfd) == -1)
 		warn("close(ptmx): %m\n");
 EXIT0:	return ret;
 };
