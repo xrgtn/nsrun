@@ -172,6 +172,8 @@ EXIT1:	return -1;
 };
 
 /*!
+ * \brief	Open and setup controlling tty.
+ *
  * Open specified tty device file \p ptsfn, change its owner to \p u:g and mode
  * to 0600, initialize attrs/winsize if \p tios/winsz is not NULL, start new
  * terminal session, set \p ptsfn as controlling terminal and reopen
