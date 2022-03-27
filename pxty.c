@@ -1,5 +1,9 @@
 /*!
- * Temporary prototype code for pty proxy (a la `su -P`).
+ * Prototype code for pty proxy (a la `su -P`), to be incorporated into nsrun
+ * later.
+ *
+ * \author	xrgtn
+ * \date	2022
  */
 
 #define _XOPEN_SOURCE	600	/* posix_openpt(), grantpt(), unlockpt(),
@@ -104,7 +108,7 @@ int waitall(pid_t child_pid) {
 };
 
 /*!
- * \bief	Open and setup pseudo-terminal master device.
+ * \brief	Open and setup pseudo-terminal master device.
  *
  * Open pty master device, do grantpt(), unlockpt() and get slave
  * pseudo-terminal device name.
@@ -113,6 +117,8 @@ int waitall(pid_t child_pid) {
  *
  * \return	open file descriptor of pty master device (/dev/ptmx) on
  *		success, -1 on error.
+ *
+ * \sa		man 3p posix_openpt
  */
 int open_ptmx(char **ptsfn) {
 	int ptmxfd;
