@@ -37,41 +37,40 @@
 	} while (0)
 
 int sigpipefd[2] = {-1, -1};
-const int sigv[] = {SIGCHLD, SIGWINCH, SIGALRM, SIGTERM, SIGINT, SIGQUIT};
+const int sigv[] = {SIGCHLD, SIGWINCH, SIGALRM, SIGTERM, SIGINT, SIGQUIT,
+	SIGHUP, SIGABRT, SIGPWR, SIGCONT};
 const int sigc = sizeof(sigv) / sizeof(*sigv);
+sig_atomic_t sigpipe_fail = 0;
+
+/* essential siginfo */
+struct siginfo_e {
+	int	se_signo;
+	int	se_code;
+	pid_t	se_pid;
+};
 
 void sigpipewriter(int sig, siginfo_t *info, void *ucontext) {
 	unsigned char b;
-	switch (sig) {
-	case SIGWINCH:
-		b = 1;
-		break;
-	case SIGALRM:
-		b = 2;
-		break;
-	case SIGTERM:
-		b = 3;
-		break;
-	case SIGINT:
-		b = 4;
-		break;
-	case SIGQUIT:
-		b = 5;
-		break;
-	case SIGCHLD:
-		switch (info->si_code) {
-		case CLD_EXITED:
-		case CLD_KILLED:
-		case CLD_DUMPED:
-			b = 6;
-			break;
-		default:
-			b = 0;
-			break;
-		};
-		break;
-	};
-	write(sigpipefd[1], &b, 1);
+	struct siginfo_e se;
+	ssize_t ssz;
+	se.se_signo	= sig;
+	se.se_code	= info->si_code;
+	se.se_pid	= info->si_pid;
+	/* man 7 pipe:
+	 * POSIX.1 says that write(2)s of less than PIPE_BUF bytes must be
+	 * atomic: the output data is written to the pipe as a contiguous
+	 * sequence. Writes of more than PIPE_BUF bytes may be nonatomic:
+	 * the kernel may interleave the data with data written by other
+	 * processes. POSIX.1 requires PIPE_BUF to be at least 512 bytes...
+	 * ...
+	 * O_NONBLOCK enabled, n <= PIPE_BUF
+	 *	If there is room to write n bytes to the pipe, then write(2)
+	 *	succeeds immediately, writing all n bytes; otherwise write(2)
+	 *	fails, with errno set to EAGAIN.
+	 */
+	ssz = write(sigpipefd[1], &se, sizeof(se));
+	if (ssz != sizeof(se))
+		sigpipe_fail = 1;
 };
 
 int waitall(pid_t child_pid) {
