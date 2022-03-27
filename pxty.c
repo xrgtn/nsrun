@@ -192,6 +192,9 @@ int open_pts(char *ptsfn, uid_t u, gid_t g,
 	int ptsfd;
 	int ret = -1;
 
+	if (ptsfn == NULL)
+		goto EXIT0;
+
 	ptsfd = open(ptsfn, O_RDWR | O_NOCTTY);
 	if (ptsfd == -1) {
 		warn("open(\"%s\", O_RDWR | O_NOCTTY): %m\n", ptsfn);
