@@ -22,8 +22,8 @@
 #include <string.h>		/* strdup(), memcpy() */
 #include <termios.h>		/* struct termios, struct winsize,
 				 * tcgetattr(), tcsetattr(), TCSANOW */
-#include <sys/wait.h>		/* wait(), WIFEXITED(), WEXITSTATUS(),
-				 * WIFSIGNALED(), WTERMSIG() */
+#include <sys/wait.h>		/* wait(), waitpid(), WNOHANG, WIFEXITED(),
+				 * WEXITSTATUS(), WIFSIGNALED(), WTERMSIG() */
 #include <fcntl.h>		/* fcntl(), F_SETFL, O_NONBLOCK */
 #include <sys/ioctl.h>		/* ioctl(), TIOCGWINSZ, TIOCSWINSZ */
 #include <poll.h>		/* poll(), struct pollfd, nfds_t, POLLIN,
@@ -75,36 +75,6 @@ void sigpipewriter(int sig, siginfo_t *info, void *ucontext) {
 	ssz = write(sigpipefd[1], &se, sizeof(se));
 	if (ssz != sizeof(se))
 		sigpipe_fail = 1;
-};
-
-int waitall(pid_t child_pid) {
-	int ret = EXIT_FAILURE;
-	int wst, r, f = 0;
-	pid_t wpid;
-	do {
-		wpid = wait(&wst);
-		if (wpid == child_pid) {
-			r = wst;
-			f = 1;
-		};
-	} while (!(wpid == -1 && errno != EINTR));
-	if (wpid == -1 && errno != ECHILD) {
-		/* ECHILD: The calling process has no existing
-		 * unwaited-for child processes.
-		 * I.e. all children have already terminated. */
-		warn("wait(): %m\n");
-		ret = EXIT_FAILURE;
-	} else if (!f) {
-		ret = EXIT_FAILURE;
-	} else if (WIFEXITED(r)) {
-		ret = WEXITSTATUS(r);
-	} else if (WIFSIGNALED(r)) {
-		ret = EXIT_FAILURE;
-		/* Commit suicide with the same signal, to relay
-		 * exec_pid's exact wstatus to our parent: */
-		kill(getpid(), WTERMSIG(r));
-	};
-	return ret;
 };
 
 /*!
@@ -350,6 +320,178 @@ int get_tty_params(int fd, struct termios *tios, struct winsize *winsz) {
 	return 1;
 };
 
+/*!
+ * \brief	Read and process incoming message from sigpipe.
+ *
+ * If "terminal" SIGCHILD is received (CLD_EXITED, CLD_KILLED or CLD_DUMPED),
+ * do waitpid(), write child's pid and status into \p *wpid and \p *wstatus
+ * respectively and return 1. As a side effect, this reaps zombie children.
+ *
+ * For non-terminal SIGCHILD messages, do nothing and return 0.
+ *
+ * \todo
+ * For SIGWINCH, relay winsize change from origfd to ptyfd.
+ *
+ * \todo
+ * For other signals, relay them to \p sigrelay_pid.
+ *
+ * \return	1 if child terminated, -1 on error, 0 otherwize.
+ */
+int process_sigpfd_in(int sigpfd, pid_t *wpid, int *wstatus,
+		int origfd, int ptyfd, pid_t sigrelay_pid) {
+	ssize_t ssz;
+	int e, ws;
+	pid_t wp;
+	struct siginfo_e se;
+
+	ssz = read(sigpfd, &se, sizeof(se));
+	if (ssz == -1 || ssz < 0) {
+		e = errno;
+		warn("read(sigpipefd): %m\n");
+		goto EXIT1;
+	} else if ((size_t)ssz < sizeof(se)) {
+		e = EINVAL;
+		warn("read(sigpipefd): incomplete read\n");
+		goto EXIT1;
+	};
+
+	switch (se.se_signo) {
+	case SIGCHLD:
+		switch (se.se_code) {
+		case CLD_EXITED:
+		case CLD_KILLED:
+		case CLD_DUMPED:
+			wp = waitpid(se.se_pid, &ws, WNOHANG);
+			if (wp == -1) {
+				e = errno;
+				warn("waitpid(%i,...): %m\n", se.se_pid);
+				goto EXIT1;
+			};
+			if (wp == 0) {
+				e = EINVAL;
+				warn("waitpid(%i,...): not dead yet\n",
+					se.se_pid);
+				goto EXIT1;
+			};
+			if (wpid != NULL)
+				*wpid = wp;
+			if (wstatus != NULL)
+				*wstatus = ws;
+			return 1;
+		};
+		break;
+	};
+	return 0;
+EXIT1:	errno = e;
+	return -1;
+};
+
+struct write_buf {
+	char buf[4096];
+	char *p, *e;
+};
+
+/*!
+ * Transfer data between origfd and ptmxfd until child_pid terminates.
+ *
+ * \param	origfd		file descriptor of original tty (STDIN)
+ * \param	ptmxfd		pty master device
+ * \param	sigpfd		signal pipe descriptor
+ * \param	child_pid	pid of child process running on slave pty
+ * \param	wstatus[out]	pointer to variable to receive child_pid's
+ *				exit status
+ *
+ * \return	0 on success, -1 on error
+ */
+int pxty_main_loop(int origfd, int ptmxfd, int sigpfd, pid_t child_pid,
+		int *wstatus) {
+	struct pollfd fds[3];
+	nfds_t nfds;
+	pid_t wpid;
+	int wst;
+	int r;
+	/* Data to be written to origfd: */
+	struct write_buf owb = {.p = NULL, .e = NULL};
+	short oev;
+	/* Data to be written to ptmxfd: */
+	struct write_buf twb = {.p = NULL, .e = NULL};
+	short tev;
+
+	do {
+		/* Indicate events we are interested in and clear previously
+		 * reported events (.revents field): */
+		oev = 0;
+		tev = 0;
+		/* If origfd write buffer is empty, wait for ptmxfd POLLIN,
+		 * otherwise wait for origfd POLLOUT: */
+		if (owb.p == owb.e)
+			tev |= POLLIN;
+		else
+			oev |= POLLOUT;
+		/* Similarly with ptmxfd write buffer: */
+		if (twb.p == twb.e)
+			oev |= POLLIN;
+		else
+			tev |= POLLOUT;
+		/* fds[0] is reserved for sigpfd: */
+		fds[0].fd = sigpfd;
+		fds[0].events = POLLIN;
+		fds[0].revents = 0;
+		nfds = 1;
+		/* if oev mask is non-zero, append origfd to fds: */
+		if (oev) {
+			fds[nfds].fd = origfd;
+			fds[nfds].events = oev;
+			fds[nfds].revents = 0;
+			nfds++;
+		};
+		/* if tev mask is non-zero, append ptmxfd to fds: */
+		if (tev) {
+			fds[nfds].fd = ptmxfd;
+			fds[nfds].events = tev;
+			fds[nfds].revents = 0;
+			nfds++;
+		};
+		do {
+			r = poll(fds, nfds, 20);
+		} while (r == -1 && errno == EINTR);
+		if (r == -1) {
+			warn("poll(): %m\n");
+			goto EXIT1;
+		};
+		for (int i = 0; i < nfds; i++) {
+			if (fds[i].fd == sigpfd && fds[i].revents & POLLIN) {
+				r = process_sigpfd_in(sigpfd, &wpid, &wst,
+					origfd, ptmxfd, child_pid);
+				if (r == -1) {
+					goto EXIT1;
+				} else if (r == 1 && wpid == child_pid
+						&& (WIFEXITED(wst)
+						|| WIFSIGNALED(wst))) {
+					if (wstatus != NULL)
+						*wstatus = wst;
+					return 0;
+				};
+			};
+			if (fds[i].fd == origfd && fds[i].revents & POLLIN) {
+				goto EXIT1;
+			};
+			if (fds[i].fd == ptmxfd && fds[i].revents & POLLIN) {
+				goto EXIT1;
+			};
+			if (fds[i].fd == origfd && fds[i].revents & POLLOUT) {
+				goto EXIT1;
+			};
+			if (fds[i].fd == ptmxfd && fds[i].revents & POLLOUT) {
+				goto EXIT1;
+			};
+		};
+	} while (1);
+
+EXIT1:	kill(child_pid, SIGKILL);
+	return -1;
+};
+
 int main(int argc, char *argv[]) {
 	int ret = EXIT_FAILURE;
 	int ptmxfd;
@@ -406,22 +548,47 @@ int main(int argc, char *argv[]) {
 		/* Open/chown/setup slave pty: */
 		if (open_pts(ptsfn, u, 5, stdin_tty ? &tios0 : NULL,
 				stdin_tty ? &winsz0 : NULL) == -1)
-			goto CXIT1;
+			goto CXIT;
 
+		/*
 		fprintf(stdout, "Hello, world!\n");
 		fflush(stdout);
+		*/
 
 		ret = EXIT_SUCCESS;
-CXIT1:		free(ptsfn);
+CXIT:		free(ptsfn);
 		return ret;
 	} else {
 		/* parent */
+		int ws, ks = 0;	/* waitstatus, killsignal */
+
+		/* Free ptsfn string early: */
 		free(ptsfn);
-		ret = waitall(pid2);
-		restore_sigaction_dfl();
+
+		/* Do main loop: */
+		if (pxty_main_loop(STDIN_FILENO, ptmxfd, sigpipefd[0], pid2,
+				&ws) == -1)
+			goto PXIT;
+
+		if (WIFEXITED(ws)) {
+			ret = WEXITSTATUS(ws);
+		} else if (WIFSIGNALED(ws)) {
+			/* Store signo that killed pid2 into ks, to commit
+			 * suicide later with the same signal. This serves
+			 * purpose of relaying pid2's exact exit status to our
+			 * parent process. */
+			ks = WTERMSIG(ws);
+		} else {
+			/* XXX: should not reach here... */
+			ks = SIGABRT;
+		};
+
+PXIT:		restore_sigaction_dfl();
 		(void) close_sigpipe(sigpipefd);
 		if (close(ptmxfd) == -1)
 			warn("close(ptmx): %m\n");
+		if (ks)
+			kill(-getpid(), ks);
 		return ret;
 	};
 
