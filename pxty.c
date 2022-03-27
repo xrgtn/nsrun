@@ -38,7 +38,7 @@
 
 int sigpipefd[2] = {-1, -1};
 const int sigv[] = {SIGCHLD, SIGWINCH, SIGALRM, SIGTERM, SIGINT, SIGQUIT,
-	SIGHUP, SIGABRT, SIGPWR, SIGCONT};
+	SIGHUP, SIGABRT, SIGPWR, SIGCONT, SIGUSR1, SIGUSR2};
 const int sigc = sizeof(sigv) / sizeof(*sigv);
 sig_atomic_t sigpipe_fail = 0;
 
