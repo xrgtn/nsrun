@@ -386,59 +386,60 @@ EXIT1:	errno = e;
 	return -1;
 };
 
-struct write_buf {
+struct xfer_buf {
 	char buf[4096];
 	char *s;	/* occupied part of buf */
 	char *f;	/* free part of buf */
 };
 
-ssize_t read_wb(int fd, struct write_buf *wb) {
-	if (wb == NULL) {
+ssize_t read_xb(int fd, struct xfer_buf *xb) {
+	if (xb == NULL) {
 		errno = EINVAL;
 		return -1;
 	};
-	if (wb->s == NULL)
-		wb->s = wb->buf;
-	if (wb->f == NULL)
-		wb->f = wb->buf;
-	char *buf_end = wb->buf + sizeof(wb->buf);
-	if (wb->f >= buf_end) {
+	if (xb->s == NULL)
+		xb->s = xb->buf;
+	if (xb->f == NULL)
+		xb->f = xb->buf;
+	char *buf_end = xb->buf + sizeof(xb->buf);
+	if (xb->f >= buf_end) {
 		errno = EINVAL;
 		return -1;
 	};
-	ssize_t ssz = read(fd, wb->f, buf_end - wb->f);
+	ssize_t ssz = read(fd, xb->f, buf_end - xb->f);
 	if (ssz < 0)
 		warn("read(%i, ...): %m\n", fd);
 	if (ssz > 0)
-		wb->f += ssz;
+		xb->f += ssz;
 	return ssz;
 };
 
-ssize_t write_wb(int fd, struct write_buf *wb) {
-	if (wb == NULL || wb->s == NULL || wb->f == NULL
+ssize_t write_xb(int fd, struct xfer_buf *xb) {
+	if (xb == NULL || xb->s == NULL || xb->f == NULL
 			/* don't permit empty writes (.s == .f): */
-			|| wb->s >= wb->f
-			|| wb->f > wb->buf + sizeof(wb->buf)) {
+			|| xb->s >= xb->f
+			|| xb->f > xb->buf + sizeof(xb->buf)) {
 		errno = EINVAL;
 		return -1;
 	};
-	ssize_t ssz = write(fd, wb->s, wb->f - wb->s);
+	ssize_t ssz = write(fd, xb->s, xb->f - xb->s);
 	if (ssz < 0)
 		warn("write(%i, ...): %m\n", fd);
 	if (ssz > 0)
-		wb->s += ssz;
+		xb->s += ssz;
 	/* Reset .s & .f pointers to beginning when all data are written: */
-	if (wb->s == wb->f) {
-		wb->s = wb->buf;
-		wb->f = wb->buf;
+	if (xb->s == xb->f) {
+		xb->s = xb->buf;
+		xb->f = xb->buf;
 	};
 	return ssz;
 };
 
 /*!
- * Transfer data between origfd and ptmxfd until child_pid terminates.
+ * Transfer data between o{in/out}fd and ptmxfd until child_pid terminates.
  *
- * \param	origfd		file descriptor of original tty (STDIN)
+ * \param	oinfd		file descriptor of original tty (STDIN)
+ * \param	ooutfd		file descriptor of original tty (STDOUT)
  * \param	ptmxfd		pty master device
  * \param	sigpfd		signal pipe descriptor
  * \param	child_pid	pid of child process running on slave pty
@@ -447,55 +448,62 @@ ssize_t write_wb(int fd, struct write_buf *wb) {
  *
  * \return	0 on success, -1 on error
  */
-int pxty_main_loop(int origfd, int ptmxfd, int sigpfd, pid_t child_pid,
-		int *wstatus) {
-	struct pollfd fds[3];
+int pxty_main_loop(int oinfd, int ooutfd, int ptmxfd, int sigpfd,
+		pid_t child_pid, int *wstatus) {
+	/* Poll for up to 4 file descriptors simultaneously (oinfd, ooutfd,
+	 * ptmxfd and sigpfd): */
+	struct pollfd fds[4];
 	nfds_t nfds;
 	pid_t wpid;
 	int wst;
 	int r;
 	int child_is_dead = 0;
-	/* Data to be written to origfd: */
-	struct write_buf owb = {.s = NULL, .f = NULL};
-	short oev;
-	/* Data to be written to ptmxfd: */
-	struct write_buf twb = {.s = NULL, .f = NULL};
-	short tev;
+	/* Data from oinfd to ptmxfd: */
+	struct xfer_buf oi2pt = {.s = NULL, .f = NULL};
+	/* Data from ptmxfd to ooutfd: */
+	struct xfer_buf pt2oo = {.s = NULL, .f = NULL};
+	/* Events of interest (POLLIN/POLLOUT) for oinfd, ooutfd and ptmxfd
+	 * respectively: */
+	short oinev, ooutev, ptev;
 
-	/* Loop while child's not dead or we have pending data in write
+	/* Loop while child's not dead or we have pending data in transfer
 	 * buffers: */
-	while (!child_is_dead || owb.s != owb.f || twb.s != twb.f) {
-		/* Indicate events we are interested in and clear previously
-		 * reported events (.revents field): */
-		oev = 0;
-		tev = 0;
-		/* If origfd write buffer is empty, wait for ptmxfd POLLIN,
-		 * otherwise wait for origfd POLLOUT: */
-		if (owb.s == owb.f)
-			tev |= POLLIN;
+	while (!child_is_dead || oi2pt.s != oi2pt.f || pt2oo.s != pt2oo.f) {
+		oinev = ooutev = ptev = 0;
+		/* If oi2pt buffer is empty, wait for oinfd's POLLIN,
+		 * otherwise wait for ptmxfd's POLLOUT: */
+		if (oi2pt.s == oi2pt.f)
+			oinev |= POLLIN;
 		else
-			oev |= POLLOUT;
-		/* Similarly with ptmxfd write buffer: */
-		if (twb.s == twb.f)
-			oev |= POLLIN;
+			ptev |= POLLOUT;
+		/* Similarly with pt2oo buffer: */
+		if (pt2oo.s == pt2oo.f)
+			ptev |= POLLIN;
 		else
-			tev |= POLLOUT;
+			ooutev |= POLLOUT;
 		/* fds[0] is reserved for sigpfd: */
 		fds[0].fd = sigpfd;
 		fds[0].events = POLLIN;
 		fds[0].revents = 0;
 		nfds = 1;
-		/* if oev mask is non-zero, append origfd to fds: */
-		if (oev) {
-			fds[nfds].fd = origfd;
-			fds[nfds].events = oev;
+		/* if oinev mask is non-zero, append oinfd to fds: */
+		if (oinev) {
+			fds[nfds].fd = oinfd;
+			fds[nfds].events = oinev;
 			fds[nfds].revents = 0;
 			nfds++;
 		};
-		/* if tev mask is non-zero, append ptmxfd to fds: */
-		if (tev) {
+		/* if ooutev mask is non-zero, append ooutfd to fds: */
+		if (ooutev) {
+			fds[nfds].fd = ooutfd;
+			fds[nfds].events = ooutev;
+			fds[nfds].revents = 0;
+			nfds++;
+		};
+		/* if ptev mask is non-zero, append ptmxfd to fds: */
+		if (ptev) {
 			fds[nfds].fd = ptmxfd;
-			fds[nfds].events = tev;
+			fds[nfds].events = ptev;
 			fds[nfds].revents = 0;
 			nfds++;
 		};
@@ -509,7 +517,7 @@ int pxty_main_loop(int origfd, int ptmxfd, int sigpfd, pid_t child_pid,
 		for (int i = 0; i < nfds; i++) {
 			if (fds[i].fd == sigpfd && fds[i].revents & POLLIN) {
 				r = process_sigpfd_in(sigpfd, &wpid, &wst,
-					origfd, ptmxfd, child_pid);
+					oinfd, ptmxfd, child_pid);
 				if (r == -1) {
 					warn("process_sigpfd_in(): %m\n");
 					goto EXIT1;
@@ -522,31 +530,31 @@ int pxty_main_loop(int origfd, int ptmxfd, int sigpfd, pid_t child_pid,
 				};
 			};
 			ssize_t ssz;
-			if (fds[i].fd == origfd && fds[i].revents & POLLIN) {
-				if (read_wb(origfd, &twb) < 0
+			if (fds[i].fd == oinfd && fds[i].revents & POLLIN) {
+				if (read_xb(oinfd, &oi2pt) < 0
 						&& errno != EINTR) {
-					warn("read_wb(origfd): %m\n");
+					warn("read_xb(oinfd): %m\n");
 					goto EXIT1;
 				};
 			};
 			if (fds[i].fd == ptmxfd && fds[i].revents & POLLIN) {
-				if ((ssz = read_wb(ptmxfd, &owb)) < 0
+				if (read_xb(ptmxfd, &pt2oo) < 0
 						&& errno != EINTR) {
-					warn("read_wb(ptmxfd): %m\n");
+					warn("read_xb(ptmxfd): %m\n");
 					goto EXIT1;
 				};
 			};
-			if (fds[i].fd == origfd && fds[i].revents & POLLOUT) {
-				if ((ssz = write_wb(origfd, &owb)) < 0
+			if (fds[i].fd == ooutfd && fds[i].revents & POLLOUT) {
+				if (write_xb(ooutfd, &pt2oo) < 0
 						&& errno != EINTR) {
-					warn("write_wb(origfd): %m\n");
+					warn("write_xb(ooutfd): %m\n");
 					goto EXIT1;
 				};
 			};
 			if (fds[i].fd == ptmxfd && fds[i].revents & POLLOUT) {
-				if (write_wb(ptmxfd, &twb) < 0
+				if (write_xb(ptmxfd, &oi2pt) < 0
 						&& errno != EINTR) {
-					warn("write_wb(ptmxfd): %m\n");
+					warn("write_xb(ptmxfd): %m\n");
 					goto EXIT1;
 				};
 			};
@@ -629,8 +637,8 @@ CXIT:		free(ptsfn);
 		free(ptsfn);
 
 		/* Do main loop: */
-		if (pxty_main_loop(STDIN_FILENO, ptmxfd, sigpipefd[0], pid2,
-				&ws) == -1)
+		if (pxty_main_loop(STDIN_FILENO, STDOUT_FILENO, ptmxfd,
+				sigpipefd[0], pid2, &ws) == -1)
 			goto PXIT;
 
 		if (WIFEXITED(ws)) {
