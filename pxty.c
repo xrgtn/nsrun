@@ -57,6 +57,7 @@ struct siginfo_e {
 void sigpipewriter(int sig, siginfo_t *info, void *ucontext) {
 	struct siginfo_e se;
 	ssize_t ssz;
+	int errno0 = errno;
 	se.se_signo	= sig;
 	se.se_code	= info->si_code;
 	se.se_pid	= info->si_pid;
@@ -75,6 +76,11 @@ void sigpipewriter(int sig, siginfo_t *info, void *ucontext) {
 	ssz = write(sigpipefd[1], &se, sizeof(se));
 	if (ssz != sizeof(se))
 		sigpipe_fail = 1;
+	/* errno
+	 *	Fetching and setting the value of errno is async-signal-safe
+	 *	provided that the signal handler saves errno on entry and
+	 *	restores its value before returning. */
+	errno = errno0;
 };
 
 /*!
@@ -509,6 +515,16 @@ int pxty_main_loop(int oinfd, int ooutfd, int ptmxfd, int sigpfd,
 	/* Events of interest (POLLIN/POLLOUT) for oinfd, ooutfd and ptmxfd
 	 * respectively: */
 	short oinev, ooutev, ptev;
+
+	/* Set O_NONBLOCK for write/output file descriptors: */
+	if (fcntl(ooutfd, F_SETFL, O_NONBLOCK) == -1) {
+		warn("set O_NONBLOCK on ooutfd: %m\n");
+		goto EXIT1;
+	};
+	if (fcntl(ptmxfd, F_SETFL, O_NONBLOCK) == -1) {
+		warn("set O_NONBLOCK on ptmxfd: %m\n");
+		goto EXIT1;
+	};
 
 	/* Loop while child's not dead or we have pending data in transfer
 	 * buffers: */
