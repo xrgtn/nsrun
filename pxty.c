@@ -355,9 +355,8 @@ int set_tty_params(int fd, const struct termios *tios,
  *
  * For non-terminal SIGCHILD messages, do nothing and return 0.
  *
- * For SIGWINCH, relay winsize change from origfd to ptyfd.
+ * For SIGWINCH, relay winsize change from \p origfd to \p ptyfd.
  *
- * \todo
  * For other signals, relay them to \p sigrelay_pid.
  *
  * \return	1 if child terminated, -1 on error, 0 otherwize.
@@ -417,6 +416,14 @@ int process_sigpfd_in(int sigpfd, pid_t *wpid, int *wstatus,
 			warn("set winsize(%i): %m\n", ptyfd);
 			goto EXIT1;
 		};
+		break;
+	default:
+		if (kill(sigrelay_pid, se.se_signo) == -1) {
+			e = errno;
+			warn("kill(%i, %i): %m\n", sigrelay_pid, se.se_signo);
+			goto EXIT1;
+		};
+		break;
 	};
 	return 0;
 EXIT1:	errno = e;
