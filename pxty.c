@@ -609,6 +609,7 @@ EXIT1:	kill(child_pid, SIGKILL);
 	return -1;
 };
 
+extern char **environ;
 int main(int argc, char *argv[]) {
 	int ret = EXIT_FAILURE;
 	int ptmxfd;
@@ -677,9 +678,13 @@ int main(int argc, char *argv[]) {
 
 		fprintf(stdout, "Hello, world!\n-- \nWBR, from %s\n", ptsfn);
 		fflush(stdout);
-		/* TODO: exec("bash") */
 
-		ret = EXIT_SUCCESS;
+		char *xargv[] = {"/bin/bash", NULL};
+		execve(xargv[0], xargv, environ);
+
+		/* execve() doesn't return on success: */
+		warn("execve(\"%s\"): %m\n", xargv[0]);
+
 CXIT:		free(ptsfn);
 		return ret;
 	} else {
