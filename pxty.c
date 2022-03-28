@@ -529,7 +529,6 @@ int pxty_main_loop(int oinfd, int ooutfd, int ptmxfd, int sigpfd,
 					child_is_dead = 1;
 				};
 			};
-			ssize_t ssz;
 			if (fds[i].fd == oinfd && fds[i].revents & POLLIN) {
 				if (read_xb(oinfd, &oi2pt) < 0
 						&& errno != EINTR) {
