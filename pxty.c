@@ -329,7 +329,6 @@ int get_tty_params(int fd, struct termios *tios, struct winsize *winsz) {
  *
  * For non-terminal SIGCHILD messages, do nothing and return 0.
  *
- * \todo
  * For SIGWINCH, relay winsize change from origfd to ptyfd.
  *
  * \todo
@@ -343,6 +342,7 @@ int process_sigpfd_in(int sigpfd, pid_t *wpid, int *wstatus,
 	int e, ws;
 	pid_t wp;
 	struct siginfo_e se;
+	struct winsize winsz;
 
 	ssz = read(sigpfd, &se, sizeof(se));
 	if (ssz == -1 || ssz < 0) {
@@ -380,6 +380,17 @@ int process_sigpfd_in(int sigpfd, pid_t *wpid, int *wstatus,
 			return 1;
 		};
 		break;
+	case SIGWINCH:
+		if (ioctl(origfd, TIOCGWINSZ, &winsz) == -1) {
+			e = errno;
+			warn("get winsize(%i): %m\n", origfd);
+			goto EXIT1;
+		};
+		if (ioctl(ptyfd, TIOCSWINSZ, &winsz) == -1) {
+			e = errno;
+			warn("set winsize(%i): %m\n", ptyfd);
+			goto EXIT1;
+		};
 	};
 	return 0;
 EXIT1:	errno = e;
