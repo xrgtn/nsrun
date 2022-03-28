@@ -646,7 +646,11 @@ int main(int argc, char *argv[]) {
 		};
 	};
 
-	/* Set tty params of master pty device, if STDIN is a tty: */
+	/* Set tty params of master pty device, if STDIN is a tty.
+	 * NOTE: do set_tty_params() _after_ installing sigpipewriter(),
+	 * otherwise winsize can change and SIGWINCH can get lost between
+	 * calls to set_tty_params() and sigaction(SIGWINCH => sigpipewriter).
+	 */
 	if (stdin_tty && set_tty_params(ptmxfd, &tios0, &winsz0) != 1) {
 		warn("set_tty_params(%i, ...): %m\n", ptmxfd);
 		goto EXIT2;
