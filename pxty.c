@@ -438,10 +438,10 @@ ssize_t write_xb(int fd, struct xfer_buf *xb) {
 /*!
  * Transfer data between o{in/out}fd and ptmxfd until child_pid terminates.
  *
- * \param	oinfd		file descriptor of original tty (STDIN)
- * \param	ooutfd		file descriptor of original tty (STDOUT)
+ * \param	oinfd		input descriptor of original tty (STDIN)
+ * \param	ooutfd		output descriptor of original tty (STDOUT)
  * \param	ptmxfd		pty master device
- * \param	sigpfd		signal pipe descriptor
+ * \param	sigpfd		signal pipe descriptor (read end)
  * \param	child_pid	pid of child process running on slave pty
  * \param	wstatus[out]	pointer to variable to receive child_pid's
  *				exit status
