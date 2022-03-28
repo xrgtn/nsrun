@@ -321,6 +321,42 @@ int get_tty_params(int fd, struct termios *tios, struct winsize *winsz) {
 };
 
 /*!
+ * Set tty attrs and winsize of \p fd.
+ *
+ * \param[in]	fd	file descriptor
+ * \param[in]	tios	fd tty attrs (termios).
+ * \param[in]	winsz	fd tty winsize.
+ *
+ * \return	1 on success, 0 if fd is not a tty, -1 on error.
+ */
+int set_tty_params(int fd, const struct termios *tios,
+		const struct winsize *winsz) {
+	/* Set tty attrs: */
+	if (tios == NULL) {
+		errno = EINVAL;
+		return -1;
+	};
+	if (tcsetattr(fd, TCSANOW, tios) == -1) {
+		if (errno == ENOTTY) {
+			return 0;
+		} else {
+			warn("tcsetattr(%i): %m\n", fd);
+			return -1;
+		};
+	};
+	/* Set winsize: */
+	if (winsz == NULL) {
+		errno = EINVAL;
+		return -1;
+	};
+	if (ioctl(fd, TIOCSWINSZ, winsz) == -1) {
+		warn("set winsize(%i): %m\n", fd);
+		return -1;
+	};
+	return 1;
+};
+
+/*!
  * \brief	Read and process incoming message from sigpipe.
  *
  * If "terminal" SIGCHILD is received (CLD_EXITED, CLD_KILLED or CLD_DUMPED),
@@ -611,6 +647,12 @@ int main(int argc, char *argv[]) {
 			warn("sigaction SIG_%i: %m\n", sigv[i]);
 			goto EXIT2;
 		};
+	};
+
+	/* Set tty params of master pty device, if STDIN is a tty: */
+	if (stdin_tty && set_tty_params(ptmxfd, &tios0, &winsz0) != 1) {
+		warn("set_tty_params(%i, ...): %m\n", ptmxfd);
+		goto EXIT2;
 	};
 
 	/* Do fork: */
