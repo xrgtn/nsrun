@@ -677,6 +677,7 @@ int main(int argc, char *argv[]) {
 
 		fprintf(stdout, "Hello, world!\n-- \nWBR, from %s\n", ptsfn);
 		fflush(stdout);
+		/* TODO: exec("bash") */
 
 		ret = EXIT_SUCCESS;
 CXIT:		free(ptsfn);
