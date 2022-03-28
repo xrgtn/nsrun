@@ -609,13 +609,27 @@ EXIT1:	kill(child_pid, SIGKILL);
 	return -1;
 };
 
+int setrawmode(struct termios *t) {
+	if (t == NULL) {
+		errno = EINVAL;
+		return -1;
+	};
+	t->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
+		| INLCR | IGNCR | ICRNL | IXON);
+	t->c_oflag &= ~OPOST;
+	t->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+	t->c_cflag &= ~(CSIZE | PARENB);
+	t->c_cflag |= CS8;
+	return 0;
+};
+
 extern char **environ;
 int main(int argc, char *argv[]) {
 	int ret = EXIT_FAILURE;
 	int ptmxfd;
 	char *ptsfn;
 	int stdin_tty;
-	struct termios tios0;
+	struct termios tios0, tios;
 	struct winsize winsz0;
 	uid_t u = getuid();
 	gid_t g = getgid();
@@ -647,21 +661,32 @@ int main(int argc, char *argv[]) {
 		};
 	};
 
-	/* Set tty params of master pty device, if STDIN is a tty.
+	/* If STDIN is a tty, set tty params of master pty device to be the
+	 * same as original tty params of STDIN, and switch STDIN to raw mode.
+	 *
 	 * NOTE: do set_tty_params() _after_ installing sigpipewriter(),
 	 * otherwise winsize can change and SIGWINCH can get lost between
 	 * calls to set_tty_params() and sigaction(SIGWINCH => sigpipewriter).
 	 */
-	if (stdin_tty && set_tty_params(ptmxfd, &tios0, &winsz0) != 1) {
-		warn("set_tty_params(%i, ...): %m\n", ptmxfd);
-		goto EXIT2;
+	if (stdin_tty) {
+		if (set_tty_params(ptmxfd, &tios0, &winsz0) != 1) {
+			warn("set_tty_params(%i, ...): %m\n", ptmxfd);
+			goto EXIT2;
+		};
+		/* Set STDIN tty to raw mode: */
+		memcpy(&tios, &tios0, sizeof(tios0));
+		setrawmode(&tios);
+		if (tcsetattr(STDIN_FILENO, TCSANOW, &tios) == -1) {
+			warn("tcsetattr(STDIN, \"raw mode\"): %m\n");
+			goto EXIT2;
+		};
 	};
 
 	/* Do fork: */
 	pid2 = fork();
 	if (pid2 == -1) {
 		warn("fork(): %m\n");
-		goto EXIT2;
+		goto EXIT3;
 	};
 
 	if (pid2 == 0) {
@@ -712,7 +737,9 @@ CXIT:		free(ptsfn);
 			ks = SIGABRT;
 		};
 
-PXIT:		restore_sigaction_dfl();
+PXIT:		if (stdin_tty && tcsetattr(STDIN_FILENO, TCSANOW, &tios0) == -1)
+			warn("tcsetattr(STDIN, \"restore orig.mode\"): %m\n");
+		restore_sigaction_dfl();
 		(void) close_sigpipe(sigpipefd);
 		if (close(ptmxfd) == -1)
 			warn("close(ptmx): %m\n");
@@ -721,6 +748,8 @@ PXIT:		restore_sigaction_dfl();
 		return ret;
 	};
 
+EXIT3:	if (stdin_tty && tcsetattr(STDIN_FILENO, TCSANOW, &tios0) == -1)
+		warn("tcsetattr(STDIN, \"restore orig.mode\"): %m\n");
 EXIT2:	restore_sigaction_dfl();
 	(void) close_sigpipe(sigpipefd);
 EXIT1:	free(ptsfn);
