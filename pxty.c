@@ -130,20 +130,18 @@ EXIT1:	return -1;
  * \brief	Open and setup controlling tty.
  *
  * Open specified tty device file \p ptsfn, change its owner to \p u:g and mode
- * to 0600, initialize attrs/winsize if \p tios/winsz is not NULL, start new
- * terminal session, set \p ptsfn as controlling terminal and reopen
- * stdin/out/err to it.
+ * to 0600, start new terminal session, set \p ptsfn as controlling terminal
+ * and reopen stdin/out/err to it.
  *
  * \param	ptsfn	tty defice filename
  * \param	u	uid to set as tty owner user
  * \param	g	gid to set as tty owner group
- * \param	tios	attrs to initialize tty (if not NULL)
- * \param	winsz	winsize to initialize tty (if not NULL)
  *
  * \return	0 on success, -1 on error.
+ *
+ * \sa		man 3 login_tty
  */
-int open_pts(char *ptsfn, uid_t u, gid_t g,
-		const struct termios *tios, const struct winsize *winsz) {
+int open_tty(char *ptsfn, uid_t u, gid_t g) {
 	int ptsfd;
 	int ret = -1;
 
@@ -162,14 +160,6 @@ int open_pts(char *ptsfn, uid_t u, gid_t g,
 	};
 	if (fchmod(ptsfd, 0600) == -1) {
 		warn("fchmod(\"%s\", 0600): %m\n", ptsfn);
-		goto EXIT1;
-	};
-	if (tios != NULL && tcsetattr(ptsfd, TCSANOW, tios) == -1) {
-		warn("tcsetattr(\"%s\", ...): %m\n", ptsfn);
-		goto EXIT1;
-	};
-	if (winsz != NULL && ioctl(ptsfd, TIOCSWINSZ, winsz) == -1) {
-		warn("set WINSZ (\"%s\"): %m\n", ptsfn);
 		goto EXIT1;
 	};
 	if (setsid() == (pid_t)-1) {
@@ -671,8 +661,7 @@ int main(int argc, char *argv[]) {
 		(void) close_sigpipe(sigpipefd);
 
 		/* Open/chown/setup slave pty: */
-		if (open_pts(ptsfn, u, 5, stdin_tty ? &tios0 : NULL,
-				stdin_tty ? &winsz0 : NULL) == -1)
+		if (open_tty(ptsfn, u, 5) == -1)
 			goto CXIT;
 
 		fprintf(stdout, "Hello, world!\n-- \nWBR, from %s\n", ptsfn);
