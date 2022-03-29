@@ -4,7 +4,7 @@ LDLIBS=-lcap
 nsrun: nsrun.c getoptv.c uid_pw.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-pxty: pxty.c
+pxty: pxty.c pty.c
 	$(CC) $(CPPFLAGS) -O3 $^ -o $@
 
 clean:
