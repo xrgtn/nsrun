@@ -352,7 +352,7 @@ int copy_tty_and_setraw(int origfd, int ptsfd, struct termios *termios_p) {
 	if (termios_p == NULL || !tios0orig)
 		return 0;
 
-	memcpy(termios_p, termios_p, sizeof(tios0));
+	memcpy(termios_p, &tios0, sizeof(tios0));
 	setrawmode(&tios0);
 	if (tcsetattr(origfd, TCSANOW, &tios0) == -1) {
 		warn("tcsetattr(%i): %m\n", origfd);
