@@ -551,6 +551,7 @@ int main(int argc, char *argv[]) {
 		};
 		memcpy(&tios, &tios0, sizeof(tios0));
 		tios.c_iflag |= IUTF8;
+		tios.c_cc[VERASE] = '\010';	/* ^H */
 		if (tcsetattr(ptsfd, TCSANOW, &tios) == -1) {
 			warn("tcsetattr(%i): %m\n", ptsfd);
 			goto EXIT2;
