@@ -564,8 +564,8 @@ ssize_t write_xb(int fd, struct xfer_buf *xb) {
  * \param	ooutfd		output descriptor of original tty (STDOUT)
  * \param	ptmxfd		pty master device (open file descriptor)
  * \param	sigpfd		signal pipe descriptor (read end)
- * \param	child_pid	pid of child process running on slave pty
  * \param	child_ttyfd	pty slave device (open file descriptor)
+ * \param	child_pid	pid of child process running on slave pty
  * \param	wstatus[out]	pointer to variable to receive child_pid's
  *				exit status
  *
