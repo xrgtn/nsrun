@@ -274,7 +274,7 @@ EXIT1:	if (ptsfd == -1) {
 EXIT0:	return ret;
 };
 
-int setrawmode(struct termios *t) {
+static int setrawmode(struct termios *t) {
 	if (t == NULL) {
 		errno = EINVAL;
 		return -1;
