@@ -478,8 +478,8 @@ int main(int argc, char *argv[]) {
 		warn("tcgetattr(%i): %m\n", STDIN_FILENO);
 		goto EXIT0;
 	};
-	if (stdin_tty && tcgetattr(STDIN_FILENO, &tios) == -1) {
-		warn("tcgetattr(%i): %m\n", STDIN_FILENO);
+	if (stdin_tty && ioctl(STDIN_FILENO, TIOCGWINSZ, &winsz0) == -1) {
+		warn("get winsize(%i): %m\n", STDIN_FILENO);
 		goto EXIT0;
 	};
 
@@ -507,7 +507,7 @@ int main(int argc, char *argv[]) {
 	 * sigpipewriter() handler, otherwise some SIGWINCH signals may be lost
 	 * (resulting in wrong pts winsize). */
 	if (ioctl(ptsfd, TIOCSWINSZ, &winsz0) == -1) {
-		warn("set winsize(%i): %m\n", ptmxfd);
+		warn("set winsize(%i): %m\n", ptsfd);
 		goto EXIT3;
 	};
 
