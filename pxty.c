@@ -430,7 +430,9 @@ EXIT1:	errno = e;
  * \param	wstatus[out]	if \p wstatus is not NULL and process_sigpfd_in
  *				returns 1, \p *wstatus contains "wait status"
  *				(see man 2 waitpid) of a child that died
- * \
+ * \param	origfd		original TTY fd to get winsz from
+ * \param	ptsfd		slave TTY fd to copy origfd's winsz to
+ * \param	sigrelay_pid	pid of a process to relay "deadly" signals to
  *
  * \return	1 if child died and its status was successfully recovered;
  *		0 if other event was successfully processed (or ignored);
