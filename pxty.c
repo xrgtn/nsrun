@@ -29,7 +29,8 @@
 				 * SIGALRM, SIGTERM, SIGINT, SIGQUIT,
 				 * struct sigaction, SA_SIGINFO,
 				 * CLD_EXITED/KILLED/DUMPED */
-#include "pty.h"		/* open_pty(), set_ctrl_tty(), setrawmode() */
+#include "pty.h"		/* open_pty(), set_ctrl_tty(),
+				 * copy_tty_and_setraw() */
 
 #define warn(...) do {						\
 		int e = errno;					\
@@ -457,31 +458,12 @@ int main(int argc, char *argv[]) {
 	int ret = EXIT_FAILURE;
 	int ptmxfd, ptsfd;
 	char *ptsfn;
-	int stdin_tty;
-	struct termios tios0, tios;
-	struct winsize winsz0;
+	struct termios tios0;
+	int raw = 0;
 	uid_t u = getuid();
 	gid_t g = getgid();
 	struct sigaction sa, sa0;
 	pid_t pid2;
-
-	/* Get STDIN's termios and winsize: */
-	if (tcgetattr(STDIN_FILENO, &tios0) == 0) {
-		stdin_tty = 1;
-	} else if (errno == ENOTTY) {
-		stdin_tty = 0;
-		/* set "default" winsize of 80x24: */
-		memset(&winsz0, 0, sizeof(winsz0));
-		winsz0.ws_col = 80;
-		winsz0.ws_row = 24;
-	} else {
-		warn("tcgetattr(%i): %m\n", STDIN_FILENO);
-		goto EXIT0;
-	};
-	if (stdin_tty && ioctl(STDIN_FILENO, TIOCGWINSZ, &winsz0) == -1) {
-		warn("get winsize(%i): %m\n", STDIN_FILENO);
-		goto EXIT0;
-	};
 
 	/* Open/init pty master: */
 	ptmxfd = open_pty(&ptsfn, &ptsfd);
@@ -499,50 +481,21 @@ int main(int argc, char *argv[]) {
 	for (int i = 0; i < sigc; i++) {
 		if (sigaction(sigv[i], &sa, &sa0) == -1) {
 			warn("sigaction SIG_%i: %m\n", sigv[i]);
+			/* On error we go to EXIT2 and not to EXIT1 because
+			 * handlers' installation may have partially succeeded
+			 * (for some SIGs). Thus, restore_sigaction_dfl(). */
 			goto EXIT2;
 		};
 	};
 
-	/* Set slave pty device's winsize. NOTE: do this _after_ installing
-	 * sigpipewriter() handler, otherwise some SIGWINCH signals may be lost
-	 * (resulting in wrong pts winsize). */
-	if (ioctl(ptsfd, TIOCSWINSZ, &winsz0) == -1) {
-		warn("set winsize(%i): %m\n", ptsfd);
-		goto EXIT3;
-	};
-
-	/* If STDIN is a tty, transfer its termios to slave pty device, and
-	 * switch STDIN to raw mode.
+	/* Initialize pts termios/winsize from STDIN or defaults, and switch
+	 * STDIN to raw mode.
 	 *
-	 * Otherwise calculate slave pty's new termios as "default-pts-termios
-	 * + flags" (assume that OS kernel initializes new pty slaves to "sane"
-	 * defaults).
-	 */
-	if (stdin_tty) {
-		if (tcsetattr(ptsfd, TCSANOW, &tios0) == -1) {
-			warn("tcsetattr(%i): %m\n", ptsfd);
-			goto EXIT2;
-		};
-		/* Set STDIN tty to raw mode: */
-		memcpy(&tios, &tios0, sizeof(tios0));
-		setrawmode(&tios);
-		if (tcsetattr(STDIN_FILENO, TCSANOW, &tios) == -1) {
-			warn("tcsetattr(%i): %m\n", STDIN_FILENO);
-			goto EXIT2;
-		};
-	} else {
-		if (tcgetattr(ptsfd, &tios0) == -1) {
-			warn("tcgetattr(%i): %m\n", ptsfd);
-			goto EXIT2;
-		};
-		memcpy(&tios, &tios0, sizeof(tios0));
-		tios.c_iflag |= IUTF8;
-		tios.c_cc[VERASE] = '\010';	/* ^H */
-		if (tcsetattr(ptsfd, TCSANOW, &tios) == -1) {
-			warn("tcsetattr(%i): %m\n", ptsfd);
-			goto EXIT2;
-		};
-	};
+	 * NOTE: init pts winsize _after_ installing sigpipewriter() handler,
+	 * otherwise some SIGWINCH signals may be lost inbetween TIOCSWINSZ
+	 * and sigaction() calls. */
+	if ((raw = copy_tty_and_setraw(STDIN_FILENO, ptsfd, &tios0)) == -1)
+		goto EXIT2;
 
 	/* Do fork: */
 	pid2 = fork();
@@ -604,8 +557,8 @@ CXIT:		free(ptsfn);
 			ks = SIGABRT;
 		};
 
-PXIT:		if (stdin_tty && tcsetattr(STDIN_FILENO, TCSANOW, &tios0) == -1)
-			warn("tcsetattr(STDIN, \"restore orig.mode\"): %m\n");
+PXIT:		if (raw && tcsetattr(STDIN_FILENO, TCSANOW, &tios0) == -1)
+			warn("tcsetattr(%i): %m\n", STDIN_FILENO);
 		restore_sigaction_dfl();
 		(void) close_sigpipe(sigpipefd);
 		if (close(ptsfd) == -1)
@@ -617,8 +570,8 @@ PXIT:		if (stdin_tty && tcsetattr(STDIN_FILENO, TCSANOW, &tios0) == -1)
 		return ret;
 	};
 
-EXIT3:	if (stdin_tty && tcsetattr(STDIN_FILENO, TCSANOW, &tios0) == -1)
-		warn("tcsetattr(STDIN, \"restore orig.mode\"): %m\n");
+EXIT3:	if (raw && tcsetattr(STDIN_FILENO, TCSANOW, &tios0) == -1)
+		warn("tcsetattr(%i): %m\n", STDIN_FILENO);
 EXIT2:	restore_sigaction_dfl();
 	(void) close_sigpipe(sigpipefd);
 EXIT1:	if (close(ptsfd) == -1)
