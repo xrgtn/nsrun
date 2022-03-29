@@ -1,5 +1,5 @@
-#ifndef	_UGIDS_H
-#define	_UGIDS_H	1
+#ifndef	UID_PW_H
+#define	UID_PW_H	1
 
 #include <unistd.h>		/* uid_t, gid_t */
 #include <pwd.h>		/* struct passwd */
@@ -21,6 +21,6 @@ struct passwb {
 
 struct passwb *getpwb(uid_t);
 
-#endif /* ifndef _UGIDS_H */
+#endif /* ifndef UID_PW_H */
 
 /* vi:set sw=8 ts=8 noet tw=79: */

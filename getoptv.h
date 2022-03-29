@@ -1,5 +1,5 @@
-#ifndef	_GETOPTV_H
-#define	_GETOPTV_H	1
+#ifndef	GETOPTV_H
+#define	GETOPTV_H	1
 
 #include <stddef.h>		/* size_t */
 
@@ -49,6 +49,6 @@ struct opt {
 int getoptv(struct opt *, char *[]);
 void freeoptv(struct opt *);
 
-#endif	/* ifndef _GETOPTV_H */
+#endif	/* ifndef GETOPTV_H */
 
 /* vi:set sw=8 ts=8 noet tw=79: */
