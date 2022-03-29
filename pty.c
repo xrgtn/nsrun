@@ -289,15 +289,15 @@ static int setrawmode(struct termios *t) {
 };
 
 /*!
- * \brief	Copy termios and winsize from origfd to ptsfd and optinally set
- *		origfd to raw mode.
+ * \brief	Init fd's termios and winsize from rfd (or defaults), and
+ *		optinally set rfd to raw mode.
  *
- * If origfd is not a tty, don't switch to raw; also do default init of ptsfd's
- * termios and winsize instead of copying: enable IUTF8, set VERASE to ^H and
- * winsize to 80x25.
+ * If rfd is not a tty, use default termios/winsize and don't switch to raw.
+ * Default termios is kernel's default plus IUTF8 and VERASE=^H.
+ * Default winsize is 80x24.
  *
- * \param	origfd		original tty device (typically STDIN)
- * \param	ptsfd		new tty (typically slave PTY)
+ * \param	fd		tty to be initialized (typically slave PTY)
+ * \param	rfd		"reference" tty device (typically STDIN)
  * \param	termios_p[out]	if termios_p is NULL, don't switch to raw mode.
  *				Otherwise, save original mode there before
  *				switching to raw.
@@ -307,28 +307,28 @@ static int setrawmode(struct termios *t) {
  *		-1 on error (with errno of main cause of failure preserved [and
  *		optionally some warnings printed on stderr]).
  */
-int copy_tty_and_setraw(int origfd, int ptsfd, struct termios *termios_p) {
+int init_tty_and_setraw(int fd, int rfd, struct termios *termios_p) {
 	struct termios tios0;
 	struct winsize winsz0;
-	int tios0orig = 0;
+	int tios0ref = 0;
 
-	/* Get/init tios0 for ptsfd: */
-	if (tcgetattr(origfd, &tios0) == 0) {
-		tios0orig = 1;
+	/* Get/init tios0 for fd: */
+	if (tcgetattr(rfd, &tios0) == 0) {
+		tios0ref = 1;
 	} else if (errno != ENOTTY) {
-		warn("tcgetattr(%i): %m\n", origfd);
+		warn("tcgetattr(%i): %m\n", rfd);
 		return -1;
-	} else if (tcgetattr(ptsfd, &tios0) == 1) {
-		warn("tcgetattr(%i): %m\n", ptsfd);
+	} else if (tcgetattr(fd, &tios0) == 1) {
+		warn("tcgetattr(%i): %m\n", fd);
 		return -1;
 	} else {
 		tios0.c_iflag |= IUTF8;
 		tios0.c_cc[VERASE] = '\010';	/* ^H */
 	};
-	/* Get/init winsz0 for ptsfd: */
-	if (ioctl(origfd, TIOCGWINSZ, &winsz0) == -1) {
+	/* Get/init winsz0 for fd: */
+	if (ioctl(rfd, TIOCGWINSZ, &winsz0) == -1) {
 		if (errno != ENOTTY) {
-			warn("get winsize(%i): %m\n", origfd);
+			warn("get winsize(%i): %m\n", rfd);
 			return -1;
 		};
 		/* set "default" winsize of 80x24: */
@@ -337,25 +337,25 @@ int copy_tty_and_setraw(int origfd, int ptsfd, struct termios *termios_p) {
 		winsz0.ws_row = 24;
 	};
 
-	/* Set ptsfd's termios: */
-	if (tcsetattr(ptsfd, TCSANOW, &tios0) == -1) {
-		warn("tcsetattr(%i): %m\n", ptsfd);
+	/* Set fd's termios: */
+	if (tcsetattr(fd, TCSANOW, &tios0) == -1) {
+		warn("tcsetattr(%i): %m\n", fd);
 		return -1;
 	};
-	/* Set ptsfd's winsize: */
-	if (ioctl(ptsfd, TIOCSWINSZ, &winsz0) == -1) {
-		warn("set winsize(%i): %m\n", ptsfd);
+	/* Set fd's winsize: */
+	if (ioctl(fd, TIOCSWINSZ, &winsz0) == -1) {
+		warn("set winsize(%i): %m\n", fd);
 		return -1;
 	};
 
-	/* If switch to raw isn't requested or origfd is not a tty, return. */
-	if (termios_p == NULL || !tios0orig)
+	/* If switch to raw isn't requested or rfd is not a tty, return. */
+	if (termios_p == NULL || !tios0ref)
 		return 0;
 
 	memcpy(termios_p, &tios0, sizeof(tios0));
 	setrawmode(&tios0);
-	if (tcsetattr(origfd, TCSANOW, &tios0) == -1) {
-		warn("tcsetattr(%i): %m\n", origfd);
+	if (tcsetattr(rfd, TCSANOW, &tios0) == -1) {
+		warn("tcsetattr(%i): %m\n", rfd);
 		return -1;
 	};
 	return 1;

@@ -494,7 +494,7 @@ int main(int argc, char *argv[]) {
 	 * NOTE: init pts winsize _after_ installing sigpipewriter() handler,
 	 * otherwise some SIGWINCH signals may be lost inbetween TIOCSWINSZ
 	 * and sigaction() calls. */
-	if ((raw = copy_tty_and_setraw(STDIN_FILENO, ptsfd, &tios0)) == -1)
+	if ((raw = init_tty_and_setraw(ptsfd, STDIN_FILENO, &tios0)) == -1)
 		goto EXIT2;
 
 	/* Do fork: */
