@@ -67,17 +67,16 @@
  */
 
 #define _XOPEN_SOURCE	600	/* posix_openpt(), grantpt(), unlockpt(),
-				 * ptsname() */
+				 * ptsname(), uid_t, gid_t */
 #define _POSIX_C_SOURCE	199309L	/* fchmod() */
 #include <stddef.h>		/* NULL */
-#include <sys/stat.h>		/* fchmod() */
+#include <sys/stat.h>		/* fchmod(), mode_t */
 #include <sys/ioctl.h>		/* ioctl(), TIOCGWINSZ, TIOCSWINSZ */
 #include <fcntl.h>		/* O_RDWR, O_NOCTTY, fcntl(), F_SETFD,
 				 * FD_CLOEXEC, F_SETFL, O_NONBLOCK */
 #include <errno.h>		/* errno, ENOTTY, EINTR, ECHILD */
-#include <unistd.h>		/* fork(), STDIN/OUT/ERR_FILENO, close(),
-				 * fchown(), dup2(), setsid(), write(), uid_t,
-				 * gid_t, pid_t */
+#include <unistd.h>		/* STDIN/OUT/ERR_FILENO, close(), fchown(),
+				 * dup2(), setsid(), uid_t, gid_t, pid_t */
 #include <stdlib.h>		/* free(), posix_openpt(), grantpt(),
 				 * unlockpt(), ptsname() */
 #include <termios.h>		/* struct termios, struct winsize,

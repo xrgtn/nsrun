@@ -7,32 +7,28 @@
  * \date	2022
  */
 
-#define _XOPEN_SOURCE	600	/* posix_openpt(), grantpt(), unlockpt(),
-				 * ptsname() */
-#define _POSIX_C_SOURCE	199309L	/* fchmod(), sigaction(), siginfo_t */
+#define _XOPEN_SOURCE	500	/* CLD_EXITED/KILLED/DUMPED, uid_t, gid_t */
+#define _POSIX_C_SOURCE	199309L	/* sigaction(), siginfo_t */
 #include <stddef.h>		/* NULL, EXIT_SUCCESS, EXIT_FAILURE */
-#include <unistd.h>		/* fork(), STDIN_FILENO, close(), fchown(),
-				 * dup2(), STDOUT_FILENO, STDERR_FILENO,
-				 * setsid(), write() */
-#include <stdlib.h>		/* free(), posix_openpt(), grantpt(),
-				 * unlockpt(), ptsname() */
+#include <unistd.h>		/* fork(), STDIN/OUT/ERR_FILENO, close(),
+				 * write(), uid_t, gid_t, pid_t */
+#include <stdlib.h>		/* free() */
 #include <fcntl.h>		/* O_RDWR, O_NOCTTY, fcntl(), F_SETFD,
 				 * FD_CLOEXEC, F_SETFL, O_NONBLOCK */
 #include <stdio.h>		/* fprintf(), stderr */
-#include <errno.h>		/* errno, ENOTTY, EINTR, ECHILD */
-#include <string.h>		/* strdup(), memcpy() */
+#include <errno.h>		/* errno, ENOTTY, EINTR */
+#include <string.h>		/* memcpy(), memset() */
 #include <termios.h>		/* struct termios, struct winsize,
 				 * tcgetattr(), tcsetattr(), TCSANOW */
-#include <sys/wait.h>		/* wait(), waitpid(), WNOHANG, WIFEXITED(),
+#include <sys/wait.h>		/* waitpid(), WNOHANG, WIFEXITED(),
 				 * WEXITSTATUS(), WIFSIGNALED(), WTERMSIG() */
 #include <sys/ioctl.h>		/* ioctl(), TIOCGWINSZ, TIOCSWINSZ */
 #include <poll.h>		/* poll(), struct pollfd, nfds_t, POLLIN,
 				 * POLLOUT */
-#include <sys/stat.h>		/* fchmod() */
 #include <signal.h>		/* sigaction(), siginfo_t, SIGCHLD, SIGWINCH,
 				 * SIGALRM, SIGTERM, SIGINT, SIGQUIT,
-				 * struct sigaction, SA_SIGINFO, CLD_EXITED,
-				 * CLD_KILLED, CLD_DUMPED etc. */
+				 * struct sigaction, SA_SIGINFO,
+				 * CLD_EXITED/KILLED/DUMPED */
 #include "pty.h"		/* open_pty(), set_ctrl_tty() */
 
 #define warn(...) do {						\
