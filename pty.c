@@ -201,13 +201,13 @@ EXIT1:	return -1;
 /*!
  * \brief	Open/setup controlling tty (of the calling process).
  *
- * Open specified tty device file \p ptsfn (if ptsfd is not valid), change \p
- * ptsfn/ptsfd's owner to \p u:g and mode to 0600, start new session, set \p
- * ptsfn/ptsfd as controlling terminal and reopen stdin/out/err to it.
+ * Open specified tty device file \p ttyfn (if ttyfd is not valid), change \p
+ * ttyfn/ttyfd's owner to \p u:g and mode to 0600, start new session, set \p
+ * ttyfn/ttyfd as controlling terminal and reopen stdin/out/err to it.
  *
- * \param	ptsfn	tty defice filename, or NULL
- * \param	ptsfd	open file descriptor of tty defice, or -1. At least one
- *			of \p ptsfn or \p ptsfd must be valid, otherwise -1 will
+ * \param	ttyfn	tty defice filename, or NULL
+ * \param	ttyfd	open file descriptor of tty defice, or -1. At least one
+ *			of \p ttyfn or \p ttyfd must be valid, otherwise -1 will
  *			be returned with errno set to EINVAL.
  * \param	u	uid to set as tty owner user
  * \param	g	gid to set as tty owner group
@@ -217,22 +217,22 @@ EXIT1:	return -1;
  *
  * \sa		man 3 login_tty
  */
-int set_ctrl_tty(char *ptsfn, int ptsfd, uid_t u, gid_t g) {
+int set_ctrl_tty(char *ttyfn, int ttyfd, uid_t u, gid_t g) {
 	int ret = -1;
 	int fd;
 
-	if (ptsfn == NULL && ptsfd == -1) {
-		warn("set_ctrl_tty(): both ptsfn and ptsfd not valid\n");
+	if (ttyfn == NULL && ttyfd == -1) {
+		warn("set_ctrl_tty(): both ttyfn and ttyfd not valid\n");
 		errno = EINVAL;
 		goto EXIT0;
 	};
 
-	if (ptsfd != -1) {
-		fd = ptsfd;
+	if (ttyfd != -1) {
+		fd = ttyfd;
 	} else {
-		fd = open(ptsfn, O_RDWR | O_NOCTTY);
+		fd = open(ttyfn, O_RDWR | O_NOCTTY);
 		if (fd == -1) {
-			warn("open(\"%s\", RW/NOCTTY): %m\n", ptsfn);
+			warn("open(\"%s\", RW/NOCTTY): %m\n", ttyfn);
 			goto EXIT0;
 		};
 	};
@@ -265,7 +265,7 @@ int set_ctrl_tty(char *ptsfn, int ptsfd, uid_t u, gid_t g) {
 		goto EXIT1;
 	};
 	ret = 0;
-EXIT1:	if (ptsfd == -1) {
+EXIT1:	if (ttyfd == -1) {
 		int e = errno;
 		if (close(fd) == -1)
 			warn("close(%i): %m\n", fd);
