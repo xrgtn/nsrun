@@ -84,116 +84,245 @@ void sigpipewriter(int sig, siginfo_t *info, void *ucontext) {
 };
 
 /*!
- * \brief	Open and setup pseudo-terminal master device.
+ * In Linux kernel, ptm and pts devices are represented by the same `struct
+ * tty_struct` type; and pair of related ptm/pts structures are linked by
+ * .link (->link) member pointers, i.e:
  *
- * Open pty master device, do grantpt(), unlockpt() and get slave
- * pseudo-terminal device name.
+ *	ptm->link == pts && pts->link == ptm
  *
- * \param[out]	ptsfn		char pointer to receive slave pty device name
+ * Differences lay in their driver->subtype: PTY_TYPE_MASTER for ptm and
+ * PTY_TYPE_SLAVE for pts, in termios parameters and a few other things (this
+ * is true for both legacy BSD-style ptm/pts and for Unix98-style ptm/pts).
+ *
+ * Typically, ptm/pts pair is regarded as pty/tty or tty/real_tty in Linux
+ * code. For example, looking at tty_pair_get_tty() and tty_ioctl() functions
+ * in drivers/tty/tty_io.c, and tty_mode_ioctl() in drivers/tty/tty_ioctl.c,
+ *
+ *	static struct tty_struct *tty_pair_get_tty(struct tty_struct *tty)
+ *	{
+ *		if (tty->driver->type == TTY_DRIVER_TYPE_PTY &&
+ *		    tty->driver->subtype == PTY_TYPE_MASTER)
+ *			tty = tty->link;
+ *		return tty;
+ *	}
+ *	... tty_ioctl():
+ *		real_tty = tty_pair_get_tty(tty);
+ *		...
+ *		switch (cmd) {
+ *		case TIOCSTI:
+ *			return tiocsti(tty, p);
+ *		case TIOCGWINSZ:
+ *			return tiocgwinsz(real_tty, p);
+ *		case TIOCSWINSZ:
+ *			return tiocswinsz(real_tty, p);
+ *		...
+ *		case TIOCGPTPEER:
+ *			return ptm_open_peer(file, tty, (int)arg);
+ *		...
+ *	... tty_mode_ioctl():
+ *		case TCSETSW2:
+ *			return set_termios(real_tty, p, TERMIOS_WAIT);
+ *		case TCSETS2:
+ *			return set_termios(real_tty, p, 0);
+ *		...
+ *
+ * we can see that:
+ *
+ * 1.	of a ptm/pts pair, _slave_ part is considered a "real" tty device.
+ *
+ * 2.	ioctl() handler silently substitutes pts when called with ptm file
+ *	descriptor for IOCGWINSZ, TIOCSWINSZ, TCSETSx and TCGETSx operations.
+ *
+ * Reading man ioctl_tty and the Linux kernel sources mentione above (plus
+ * drivers/tty/pty.c), the conclusion is as follows:
+ *
+ * ptm/pts pair represents a slave tty device, "owned" by non-tty master.
+ * All termios and winsize operations should be directed to pts (although on
+ * Linux they work against ptm all the same), while ptm is to be used for
+ * sending "input" to and receiving "output" from pts, ans issuing
+ * ptm-specific ioctls TIOCPKT, TIOCGPKT, TIOCSPTLCK, TIOCGPTLCK, TIOCSIG,
+ * TIOCGPTN and TIOCGPTPEER.
+ */
+
+/*!
+ * \brief	Open and setup pseudo-terminal master and optionally open
+ *		corresponding pty slave device.
+ *
+ * Open pty master device, do grantpt(), unlockpt(), optionally get slave pty
+ * device name and open it.
+ *
+ * \param[out]	ptsfn	If \p ptsfn is non-NULL, on return \p *ptsfn will point
+ *			to dynamically allocated string holding slave pty
+ *			device name.
+ *
+ * \param[out]	ptsfd	If \p ptsfd is not NULL, on return \p *ptsfd will hold
+ *			open pts file descriptor. If ptsfd is NULL, open_pty()
+ *			won't try open pts device. If both ptsfn and ptsfd are
+ *			NULL, open_pty() won't call ptsname()/strdup() too.
  *
  * \return	open file descriptor of pty master device (/dev/ptmx) on
- *		success, -1 on error.
+ *		success, -1 on error (with errno of main cause of failure
+ *		preserved [and optionally some warnings printed on stderr]).
  *
  * \sa		man 3p posix_openpt
  */
-int open_ptmx(char **ptsfn) {
-	int ptmxfd;
-	char *p;
-	if (ptsfn == NULL)
-		goto EXIT1;
+int open_pty(char **ptsfn, int *ptsfd) {
+	int ptmxfd, e;
 
-	/* Open /dev/ptmx The-POSIX-Way: */
+	/* Open /dev/ptmx The-POSIX-Way (see Tcl/Expect's source code if you're
+	 * interested what other ways there are): */
 	ptmxfd = posix_openpt(O_RDWR | O_NOCTTY);
 	if (ptmxfd == -1) {
-		warn("posix_openpt(O_RDWR | O_NOCTTY): %m\n");
+		warn("posix_openpt(RW/NOCTTY): %m\n");
 		goto EXIT1;
 	};
 	if (grantpt(ptmxfd) == -1) {
-		warn("grantpt(ptmx): %m\n");
+		warn("grantpt(%i): %m\n", ptmxfd);
 		goto EXIT2;
 	};
 	if (unlockpt(ptmxfd) == -1) {
-		warn("unlockpt(ptmx): %m\n");
+		warn("unlockpt(%i): %m\n", ptmxfd);
 		goto EXIT2;
 	};
-	p = ptsname(ptmxfd);
-	if (p == NULL) {
-		warn("ptsname(ptmx): %m\n");
-		goto EXIT2;
+
+	if (ptsfn == NULL) {
+		if (ptsfd == NULL) {
+			/* If caller is not interested in pts filename nor its
+			 * file descriptor, return open ptmx file descriptor
+			 * only: */
+			return ptmxfd;
+		} else /* ptsfd != NULL */ {
+			int fd;
+#ifdef	TIOCGPTPEER
+			fd = ioctl(ptmxfd, TIOCGPTPEER, O_RDWR | O_NOCTTY);
+			if (fd == -1) {
+				warn("ioctl(%i, TIOCGPTPEER): %m\n", ptmxfd);
+				goto EXIT2;
+			};
+#else	/* !defined(TIOCGPTPEER) */
+			char *p = ptsname(ptmxfd);
+			if (p == NULL) {
+				warn("ptsname(%i): %m\n", ptmxfd);
+				goto EXIT2;
+			};
+			fd = open(p, O_RDWR | O_NOCTTY);
+			if (fd == -1) {
+				warn("open(\"%s\", RW/NOCTTY): %m\n", p);
+				goto EXIT2;
+			};
+#endif	/* !defined(TIOCGPTPEER) */
+			*ptsfd = fd;
+			return ptmxfd;
+		};
+	} else /* ptsfn != NULL */ {
+		char *p, *fn;
+		p = ptsname(ptmxfd);
+		if (p == NULL) {
+			warn("ptsname(%i): %m\n", ptmxfd);
+			goto EXIT2;
+		};
+		fn = strdup(p);
+		if (fn == NULL) {
+			warn("strdup(\"%s\"): %m\n", p);
+			goto EXIT2;
+		};
+		if (ptsfd == NULL) {
+			*ptsfn = fn;
+			return ptmxfd;
+		} else /* ptsfd != NULL */ {
+			int fd = open(fn, O_RDWR | O_NOCTTY);
+			if (fd == -1) {
+				warn("open(\"%s\", RW/NOCTTY): %m\n", fn);
+				goto EXIT3;
+			};
+			*ptsfn = fn;
+			*ptsfd = fd;
+			return ptmxfd;
+		};
+EXIT3:		e = errno;
+		free(fn);
+		errno = e;
 	};
-	*ptsfn = strdup(p);
-	if (*ptsfn == NULL) {
-		warn("strdup(\"%s\"): %m\n", p);
-		goto EXIT2;
-	};
-	return ptmxfd;
-EXIT2:	if (close(ptmxfd) == -1)
+EXIT2:	e = errno;
+	if (close(ptmxfd) == -1)
 		warn("close(ptmx): %m\n");
+	errno = e;
 EXIT1:	return -1;
 };
 
 /*!
- * \brief	Open and setup controlling tty.
+ * \brief	Open/setup controlling tty (of the calling process).
  *
- * Open specified tty device file \p ptsfn, change its owner to \p u:g and mode
- * to 0600, start new terminal session, set \p ptsfn as controlling terminal
- * and reopen stdin/out/err to it.
+ * Open specified tty device file \p ptsfn (if ptsfd is not valid), change \p
+ * ptsfn/ptsfd's owner to \p u:g and mode to 0600, start new session, set \p
+ * ptsfn/ptsfd as controlling terminal and reopen stdin/out/err to it.
  *
- * \param	ptsfn	tty defice filename
+ * \param	ptsfn	tty defice filename, or NULL
+ * \param	ptsfd	open file descriptor of tty defice, or -1. At least one
+ *			of \p ptsfn or \p ptsfd must be valid, otherwize -1 will
+ *			be returned with errno set to EINVAL.
  * \param	u	uid to set as tty owner user
  * \param	g	gid to set as tty owner group
  *
- * \return	0 on success, -1 on error.
+ * \return	0 on success, -1 on error (with errno of main cause of failure
+ *		preserved [and optionally some warnings printed on stderr]).
  *
  * \sa		man 3 login_tty
  */
-int open_tty(char *ptsfn, uid_t u, gid_t g) {
-	int ptsfd;
+int set_ctrl_tty(char *ptsfn, int ptsfd, uid_t u, gid_t g) {
 	int ret = -1;
+	int fd;
 
-	if (ptsfn == NULL)
-		goto EXIT0;
-
-	ptsfd = open(ptsfn, O_RDWR | O_NOCTTY);
-	if (ptsfd == -1) {
-		warn("open(\"%s\", O_RDWR | O_NOCTTY): %m\n", ptsfn);
+	if (ptsfn == NULL && ptsfd == -1) {
+		warn("set_ctrl_tty(): both ptsfn and ptsfd not valid\n");
+		errno = EINVAL;
 		goto EXIT0;
 	};
-	if (fchown(ptsfd, u, g) == -1) {
-		warn("fchown(\"%s\", %u, %u): %m\n", ptsfn,
-			(unsigned)u, (unsigned)g);
+
+	if (ptsfd != -1) {
+		fd = ptsfd;
+	} else {
+		fd = open(ptsfn, O_RDWR | O_NOCTTY);
+		if (fd == -1) {
+			warn("open(\"%s\", RW/NOCTTY): %m\n", ptsfn);
+			goto EXIT0;
+		};
+	};
+	if (fchown(fd, u, g) == -1) {
+		warn("fchown(%i, %u, %u): %m\n", fd, (unsigned)u, (unsigned)g);
 		goto EXIT1;
 	};
-	if (fchmod(ptsfd, 0600) == -1) {
-		warn("fchmod(\"%s\", 0600): %m\n", ptsfn);
+	if (fchmod(fd, 0600) == -1) {
+		warn("fchmod(%i, 0600): %m\n", fd);
 		goto EXIT1;
 	};
 	if (setsid() == (pid_t)-1) {
 		warn("setsid(): %m\n");
 		goto EXIT1;
 	};
-	if (ioctl(ptsfd, TIOCSCTTY, 0) == -1) {
-		warn("ioctl(\"%s\", TIOCSCTTY, 0): %m\n", ptsfn);
+	if (ioctl(fd, TIOCSCTTY, 0) == -1) {
+		warn("ioctl(%i, TIOCSCTTY): %m\n", fd);
 		goto EXIT1;
 	};
-	if (ptsfd != STDIN_FILENO
-			&& dup2(ptsfd, STDIN_FILENO) == -1) {
-		warn("dup2(\"%s\", %i): %m\n", ptsfn, STDIN_FILENO);
+	if (fd != STDIN_FILENO && dup2(fd, STDIN_FILENO) == -1) {
+		warn("dup2(%i, %i): %m\n", fd, STDIN_FILENO);
 		goto EXIT1;
 	};
-	if (ptsfd != STDOUT_FILENO
-			&& dup2(ptsfd, STDOUT_FILENO) == -1) {
-		warn("dup2(\"%s\", %i): %m\n", ptsfn, STDOUT_FILENO);
+	if (fd != STDOUT_FILENO && dup2(fd, STDOUT_FILENO) == -1) {
+		warn("dup2(%i, %i): %m\n", fd, STDOUT_FILENO);
 		goto EXIT1;
 	};
-	if (ptsfd != STDERR_FILENO
-			&& dup2(ptsfd, STDERR_FILENO) == -1) {
-		warn("dup2(\"%s\", %i): %m\n", ptsfn, STDERR_FILENO);
+	if (fd != STDERR_FILENO && dup2(fd, STDERR_FILENO) == -1) {
+		warn("dup2(%i, %i): %m\n", fd, STDERR_FILENO);
 		goto EXIT1;
 	};
 	ret = 0;
-EXIT1:	if (close(ptsfd) == -1)
-		warn("close(\"%s\"): %m\n", ptsfn);
+EXIT1:	if (ptsfd == -1) {
+		int e = errno;
+		if (close(fd) == -1)
+			warn("close(%i): %m\n", fd);
+		errno = e;
+	};
 EXIT0:	return ret;
 };
 
@@ -282,93 +411,34 @@ EXIT1:	errno = e;
 };
 
 /*!
- * Get tty attrs and winsize of \p fd.
- *
- * \param[in]	fd	file descriptor
- * \param[out]	tios	fd tty attrs (termios).
- * \param[out]	winsz	fd tty winsize.
- *
- * \return	1 on success, 0 if fd is not a tty, -1 on error.
- */
-int get_tty_params(int fd, struct termios *tios, struct winsize *winsz) {
-	/* Get current tty attrs of fd: */
-	if (tios == NULL) {
-		errno = EINVAL;
-		return -1;
-	};
-	if (tcgetattr(fd, tios) == -1) {
-		if (errno == ENOTTY) {
-			return 0;
-		} else {
-			warn("tcgetattr(%i): %m\n", fd);
-			return -1;
-		};
-	};
-	/* Get current winsize of fd: */
-	if (winsz == NULL) {
-		errno = EINVAL;
-		return -1;
-	};
-	if (ioctl(fd, TIOCGWINSZ, winsz) == -1) {
-		warn("get winsize(%i): %m\n", fd);
-		return -1;
-	};
-	return 1;
-};
-
-/*!
- * Set tty attrs and winsize of \p fd.
- *
- * \param[in]	fd	file descriptor
- * \param[in]	tios	fd tty attrs (termios).
- * \param[in]	winsz	fd tty winsize.
- *
- * \return	1 on success, 0 if fd is not a tty, -1 on error.
- */
-int set_tty_params(int fd, const struct termios *tios,
-		const struct winsize *winsz) {
-	/* Set tty attrs: */
-	if (tios == NULL) {
-		errno = EINVAL;
-		return -1;
-	};
-	if (tcsetattr(fd, TCSANOW, tios) == -1) {
-		if (errno == ENOTTY) {
-			return 0;
-		} else {
-			warn("tcsetattr(%i): %m\n", fd);
-			return -1;
-		};
-	};
-	/* Set winsize: */
-	if (winsz == NULL) {
-		errno = EINVAL;
-		return -1;
-	};
-	if (ioctl(fd, TIOCSWINSZ, winsz) == -1) {
-		warn("set winsize(%i): %m\n", fd);
-		return -1;
-	};
-	return 1;
-};
-
-/*!
  * \brief	Read and process incoming message from sigpipe.
  *
- * If "terminal" SIGCHILD is received (CLD_EXITED, CLD_KILLED or CLD_DUMPED),
+ * If "death" SIGCHILD is received (CLD_EXITED, CLD_KILLED or CLD_DUMPED),
  * do waitpid(), write child's pid and status into \p *wpid and \p *wstatus
  * respectively and return 1. As a side effect, this reaps zombie children.
  *
  * For non-terminal SIGCHILD messages, do nothing and return 0.
  *
- * For SIGWINCH, relay winsize change from \p origfd to \p ptyfd.
+ * For SIGWINCH, relay winsize change from \p origfd to \p ptsfd.
  *
  * For other signals, relay them to \p sigrelay_pid.
  *
- * \return	1 if child terminated, -1 on error, 0 otherwize.
+ * \param	sigpfd		open file descriptor of signal pipe (read end)
+ * \param	wpid[out]	if \p wpid is not NULL and process_sigpfd_in
+ *				returns 1, \p *wpid contains pid of a child
+ *				that died
+ * \param	wstatus[out]	if \p wstatus is not NULL and process_sigpfd_in
+ *				returns 1, \p *wstatus contains "wait status"
+ *				(see man 2 waitpid) of a child that died
+ * \
+ *
+ * \return	1 if child died and its status was successfully recovered;
+ *		0 if other event was successfully processed (or ignored);
+ *		-1 on error (with errno of main cause of failure preserved
+ *		[and optionally some warnings printed on stderr]).
  */
 int process_sigpfd_in(int sigpfd, pid_t *wpid, int *wstatus,
-		int origfd, int ptyfd, pid_t sigrelay_pid) {
+		int origfd, int ptsfd, pid_t sigrelay_pid) {
 	ssize_t ssz;
 	int e, ws;
 	pid_t wp;
@@ -417,9 +487,9 @@ int process_sigpfd_in(int sigpfd, pid_t *wpid, int *wstatus,
 			warn("get winsize(%i): %m\n", origfd);
 			goto EXIT1;
 		};
-		if (ioctl(ptyfd, TIOCSWINSZ, &winsz) == -1) {
+		if (ioctl(ptsfd, TIOCSWINSZ, &winsz) == -1) {
 			e = errno;
-			warn("set winsize(%i): %m\n", ptyfd);
+			warn("set winsize(%i): %m\n", ptsfd);
 			goto EXIT1;
 		};
 		break;
@@ -490,16 +560,17 @@ ssize_t write_xb(int fd, struct xfer_buf *xb) {
  *
  * \param	oinfd		input descriptor of original tty (STDIN)
  * \param	ooutfd		output descriptor of original tty (STDOUT)
- * \param	ptmxfd		pty master device
+ * \param	ptmxfd		pty master device (open file descriptor)
  * \param	sigpfd		signal pipe descriptor (read end)
  * \param	child_pid	pid of child process running on slave pty
+ * \param	child_ttyfd	pty slave device (open file descriptor)
  * \param	wstatus[out]	pointer to variable to receive child_pid's
  *				exit status
  *
  * \return	0 on success, -1 on error
  */
 int pxty_main_loop(int oinfd, int ooutfd, int ptmxfd, int sigpfd,
-		pid_t child_pid, int *wstatus) {
+		int child_ttyfd, int child_pid, int *wstatus) {
 	/* Poll for up to 4 file descriptors simultaneously (oinfd, ooutfd,
 	 * ptmxfd and sigpfd): */
 	struct pollfd fds[4];
@@ -577,7 +648,7 @@ int pxty_main_loop(int oinfd, int ooutfd, int ptmxfd, int sigpfd,
 		for (int i = 0; i < nfds; i++) {
 			if (fds[i].fd == sigpfd && fds[i].revents & POLLIN) {
 				r = process_sigpfd_in(sigpfd, &wpid, &wst,
-					oinfd, ptmxfd, child_pid);
+					oinfd, child_ttyfd, child_pid);
 				if (r == -1) {
 					warn("process_sigpfd_in(): %m\n");
 					goto EXIT1;
@@ -642,7 +713,7 @@ int setrawmode(struct termios *t) {
 extern char **environ;
 int main(int argc, char *argv[]) {
 	int ret = EXIT_FAILURE;
-	int ptmxfd;
+	int ptmxfd, ptsfd;
 	char *ptsfn;
 	int stdin_tty;
 	struct termios tios0, tios;
@@ -652,13 +723,26 @@ int main(int argc, char *argv[]) {
 	struct sigaction sa, sa0;
 	pid_t pid2;
 
-	/* Get STDIN's tty params: */
-	stdin_tty = get_tty_params(STDIN_FILENO, &tios0, &winsz0);
-	if (stdin_tty == -1)
+	/* Get STDIN's termios and winsize: */
+	if (tcgetattr(STDIN_FILENO, &tios0) == 0) {
+		stdin_tty = 1;
+	} else if (errno == ENOTTY) {
+		stdin_tty = 0;
+		/* set "default" winsize of 80x24: */
+		memset(&winsz0, 0, sizeof(winsz0));
+		winsz0.ws_col = 80;
+		winsz0.ws_row = 24;
+	} else {
+		warn("tcgetattr(%i): %m\n", STDIN_FILENO);
 		goto EXIT0;
+	};
+	if (stdin_tty && tcgetattr(STDIN_FILENO, &tios) == -1) {
+		warn("tcgetattr(%i): %m\n", STDIN_FILENO);
+		goto EXIT0;
+	};
 
 	/* Open/init pty master: */
-	ptmxfd = open_ptmx(&ptsfn);
+	ptmxfd = open_pty(&ptsfn, &ptsfd);
 	if (ptmxfd == 1)
 		goto EXIT0;
 
@@ -677,23 +761,42 @@ int main(int argc, char *argv[]) {
 		};
 	};
 
-	/* If STDIN is a tty, set tty params of master pty device to be the
-	 * same as original tty params of STDIN, and switch STDIN to raw mode.
+	/* Set slave pty device's winsize. NOTE: do this _after_ installing
+	 * sigpipewriter() handler, otherwise some SIGWINCH signals may be lost
+	 * (resulting in wrong pts winsize). */
+	if (ioctl(ptsfd, TIOCSWINSZ, &winsz0) == -1) {
+		warn("set winsize(%i): %m\n", ptmxfd);
+		goto EXIT3;
+	};
+
+	/* If STDIN is a tty, transfer its termios to slave pty device, and
+	 * switch STDIN to raw mode.
 	 *
-	 * NOTE: do set_tty_params() _after_ installing sigpipewriter(),
-	 * otherwise winsize can change and SIGWINCH can get lost between
-	 * calls to set_tty_params() and sigaction(SIGWINCH => sigpipewriter).
+	 * Otherwize calculate slave pty's new termios as "default-pts-termios
+	 * + flags" (assume that OS kernel initializes new pty slaves to "sane"
+	 * defaults).
 	 */
 	if (stdin_tty) {
-		if (set_tty_params(ptmxfd, &tios0, &winsz0) != 1) {
-			warn("set_tty_params(%i, ...): %m\n", ptmxfd);
+		if (tcsetattr(ptsfd, TCSANOW, &tios0) == -1) {
+			warn("tcsetattr(%i): %m\n", ptsfd);
 			goto EXIT2;
 		};
 		/* Set STDIN tty to raw mode: */
 		memcpy(&tios, &tios0, sizeof(tios0));
 		setrawmode(&tios);
 		if (tcsetattr(STDIN_FILENO, TCSANOW, &tios) == -1) {
-			warn("tcsetattr(STDIN, \"raw mode\"): %m\n");
+			warn("tcsetattr(%i): %m\n", STDIN_FILENO);
+			goto EXIT2;
+		};
+	} else {
+		if (tcgetattr(ptsfd, &tios0) == -1) {
+			warn("tcgetattr(%i): %m\n", ptsfd);
+			goto EXIT2;
+		};
+		memcpy(&tios, &tios0, sizeof(tios0));
+		tios.c_iflag |= IUTF8;
+		if (tcsetattr(ptsfd, TCSANOW, &tios) == -1) {
+			warn("tcsetattr(%i): %m\n", ptsfd);
 			goto EXIT2;
 		};
 	};
@@ -713,9 +816,14 @@ int main(int argc, char *argv[]) {
 		restore_sigaction_dfl();
 		(void) close_sigpipe(sigpipefd);
 
-		/* Open/chown/setup slave pty: */
-		if (open_tty(ptsfn, u, 5) == -1)
+		/* Open/setup slave pty as controlling tty: */
+		if (set_ctrl_tty(ptsfn, ptsfd, u, 5) == -1)
 			goto CXIT;
+
+		/* Close original ptsfd, because we have already duplicated it
+		 * to STDIN/OUT/ERR: */
+		if (close(ptsfd) == -1)
+			warn("close(%i): %m\n", ptsfd);
 
 		fprintf(stdout, "Hello, world!\n-- \nWBR, from %s\n", ptsfn);
 		fflush(stdout);
@@ -737,7 +845,7 @@ CXIT:		free(ptsfn);
 
 		/* Do main loop: */
 		if (pxty_main_loop(STDIN_FILENO, STDOUT_FILENO, ptmxfd,
-				sigpipefd[0], pid2, &ws) == -1)
+				sigpipefd[0], ptsfd, pid2, &ws) == -1)
 			goto PXIT;
 
 		if (WIFEXITED(ws)) {
@@ -757,8 +865,10 @@ PXIT:		if (stdin_tty && tcsetattr(STDIN_FILENO, TCSANOW, &tios0) == -1)
 			warn("tcsetattr(STDIN, \"restore orig.mode\"): %m\n");
 		restore_sigaction_dfl();
 		(void) close_sigpipe(sigpipefd);
+		if (close(ptsfd) == -1)
+			warn("close(%i): %m\n", ptsfd);
 		if (close(ptmxfd) == -1)
-			warn("close(ptmx): %m\n");
+			warn("close(%i): %m\n", ptmxfd);
 		if (ks)
 			kill(-getpid(), ks);
 		return ret;
@@ -768,9 +878,11 @@ EXIT3:	if (stdin_tty && tcsetattr(STDIN_FILENO, TCSANOW, &tios0) == -1)
 		warn("tcsetattr(STDIN, \"restore orig.mode\"): %m\n");
 EXIT2:	restore_sigaction_dfl();
 	(void) close_sigpipe(sigpipefd);
-EXIT1:	free(ptsfn);
+EXIT1:	if (close(ptsfd) == -1)
+		warn("close(%i): %m\n", ptsfd);
+	free(ptsfn);
 	if (close(ptmxfd) == -1)
-		warn("close(ptmx): %m\n");
+		warn("close(%i): %m\n", ptmxfd);
 EXIT0:	return ret;
 };
 
