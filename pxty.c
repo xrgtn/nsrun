@@ -29,7 +29,7 @@
 				 * SIGALRM, SIGTERM, SIGINT, SIGQUIT,
 				 * struct sigaction, SA_SIGINFO,
 				 * CLD_EXITED/KILLED/DUMPED */
-#include "pty.h"		/* open_pty(), set_ctrl_tty() */
+#include "pty.h"		/* open_pty(), set_ctrl_tty(), setrawmode() */
 
 #define warn(...) do {						\
 		int e = errno;					\
@@ -450,20 +450,6 @@ int pxty_main_loop(int oinfd, int ooutfd, int ptmxfd, int sigpfd,
 
 EXIT1:	kill(child_pid, SIGKILL);
 	return -1;
-};
-
-int setrawmode(struct termios *t) {
-	if (t == NULL) {
-		errno = EINVAL;
-		return -1;
-	};
-	t->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
-		| INLCR | IGNCR | ICRNL | IXON);
-	t->c_oflag &= ~OPOST;
-	t->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-	t->c_cflag &= ~(CSIZE | PARENB);
-	t->c_cflag |= CS8;
-	return 0;
 };
 
 extern char **environ;

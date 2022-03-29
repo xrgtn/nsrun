@@ -274,4 +274,18 @@ EXIT1:	if (ptsfd == -1) {
 EXIT0:	return ret;
 };
 
+int setrawmode(struct termios *t) {
+	if (t == NULL) {
+		errno = EINVAL;
+		return -1;
+	};
+	t->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
+		| INLCR | IGNCR | ICRNL | IXON);
+	t->c_oflag &= ~OPOST;
+	t->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+	t->c_cflag &= ~(CSIZE | PARENB);
+	t->c_cflag |= CS8;
+	return 0;
+};
+
 /* vi:set sw=8 ts=8 noet tw=79: */

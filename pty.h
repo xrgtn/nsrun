@@ -10,9 +10,11 @@
  * properly defined prior to that, uid_t/gid_t won't be available.
  */
 #include <unistd.h>	/* uid_t, gid_t */
+#include <termios.h>	/* struct termios */
 
 int open_pty(char **, int *);
 int set_ctrl_tty(char *, int, uid_t, gid_t);
+int setrawmode(struct termios *);
 
 /* vi:set sw=8 ts=8 noet tw=79 ft=c: */
 #endif	/* ifndef PTY_H */
