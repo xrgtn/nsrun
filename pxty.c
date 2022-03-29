@@ -2,6 +2,7 @@
  * Prototype code for pty proxy (a la `su -P`), to be incorporated into nsrun
  * later.
  *
+ * \version	1.0
  * \author	xrgtn
  * \date	2022
  */
