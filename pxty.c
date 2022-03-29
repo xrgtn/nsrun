@@ -25,7 +25,6 @@
 				 * tcgetattr(), tcsetattr(), TCSANOW */
 #include <sys/wait.h>		/* wait(), waitpid(), WNOHANG, WIFEXITED(),
 				 * WEXITSTATUS(), WIFSIGNALED(), WTERMSIG() */
-#include <fcntl.h>		/* fcntl(), F_SETFL, O_NONBLOCK */
 #include <sys/ioctl.h>		/* ioctl(), TIOCGWINSZ, TIOCSWINSZ */
 #include <poll.h>		/* poll(), struct pollfd, nfds_t, POLLIN,
 				 * POLLOUT */
