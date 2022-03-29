@@ -207,7 +207,7 @@ EXIT1:	return -1;
  *
  * \param	ptsfn	tty defice filename, or NULL
  * \param	ptsfd	open file descriptor of tty defice, or -1. At least one
- *			of \p ptsfn or \p ptsfd must be valid, otherwize -1 will
+ *			of \p ptsfn or \p ptsfd must be valid, otherwise -1 will
  *			be returned with errno set to EINVAL.
  * \param	u	uid to set as tty owner user
  * \param	g	gid to set as tty owner group
@@ -286,6 +286,79 @@ int setrawmode(struct termios *t) {
 	t->c_cflag &= ~(CSIZE | PARENB);
 	t->c_cflag |= CS8;
 	return 0;
+};
+
+/*!
+ * \brief	Copy termios and winsize from origfd to ptsfd and optinally set
+ *		origfd to raw mode.
+ *
+ * If origfd is not a tty, don't switch to raw; also do default init of ptsfd's
+ * termios and winsize instead of copying: enable IUTF8, set VERASE to ^H and
+ * winsize to 80x25.
+ *
+ * \param	origfd		original tty device (typically STDIN)
+ * \param	ptsfd		new tty (typically slave PTY)
+ * \param	termios_p[out]	if termios_p is NULL, don't switch to raw mode.
+ *				Otherwise, save original mode there before
+ *				switching to raw.
+ *
+ * \return	1 if copy/init succeded and raw mode set,
+ *		0 on success otherwise,
+ *		-1 on error (with errno of main cause of failure preserved [and
+ *		optionally some warnings printed on stderr]).
+ */
+int copy_tty_and_setraw(int origfd, int ptsfd, struct termios *termios_p) {
+	struct termios tios0;
+	struct winsize winsz0;
+	int tios0orig = 0;
+
+	/* Get/init tios0 for ptsfd: */
+	if (tcgetattr(origfd, &tios0) == 0) {
+		tios0orig = 1;
+	} else if (errno != ENOTTY) {
+		warn("tcgetattr(%i): %m\n", origfd);
+		return -1;
+	} else if (tcgetattr(ptsfd, &tios0) == 1) {
+		warn("tcgetattr(%i): %m\n", ptsfd);
+		return -1;
+	} else {
+		tios0.c_iflag |= IUTF8;
+		tios0.c_cc[VERASE] = '\010';	/* ^H */
+	};
+	/* Get/init winsz0 for ptsfd: */
+	if (ioctl(origfd, TIOCGWINSZ, &winsz0) == -1) {
+		if (errno != ENOTTY) {
+			warn("get winsize(%i): %m\n", origfd);
+			return -1;
+		};
+		/* set "default" winsize of 80x24: */
+		memset(&winsz0, 0, sizeof(winsz0));
+		winsz0.ws_col = 80;
+		winsz0.ws_row = 24;
+	};
+
+	/* Set ptsfd's termios: */
+	if (tcsetattr(ptsfd, TCSANOW, &tios0) == -1) {
+		warn("tcsetattr(%i): %m\n", ptsfd);
+		return -1;
+	};
+	/* Set ptsfd's winsize: */
+	if (ioctl(ptsfd, TIOCSWINSZ, &winsz0) == -1) {
+		warn("set winsize(%i): %m\n", ptsfd);
+		return -1;
+	};
+
+	/* If switch to raw isn't requested or origfd is not a tty, return. */
+	if (termios_p == NULL || !tios0orig)
+		return 0;
+
+	memcpy(termios_p, termios_p, sizeof(tios0));
+	setrawmode(&tios0);
+	if (tcsetattr(origfd, TCSANOW, &tios0) == -1) {
+		warn("tcsetattr(%i): %m\n", origfd);
+		return -1;
+	};
+	return 1;
 };
 
 /* vi:set sw=8 ts=8 noet tw=79: */
