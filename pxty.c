@@ -514,7 +514,7 @@ int main(int argc, char *argv[]) {
 	/* If STDIN is a tty, transfer its termios to slave pty device, and
 	 * switch STDIN to raw mode.
 	 *
-	 * Otherwize calculate slave pty's new termios as "default-pts-termios
+	 * Otherwise calculate slave pty's new termios as "default-pts-termios
 	 * + flags" (assume that OS kernel initializes new pty slaves to "sane"
 	 * defaults).
 	 */

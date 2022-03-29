@@ -420,7 +420,7 @@ int main(int argc, char *argv[]) {
 			" -r=DIR  chroot to DIR before setns()/unshare() if"
 				" not creating new user\n"
 			"         namespace or after setns()/unshare()"
-				" otherwize\n"
+				" otherwise\n"
 			" -P=XYZ  putenv(XYZ) into new environment, e.g."
 				" -P=TERM=xterm to set TERM\n"
 			"         variable, or -P=TERM to remove TERM from"
