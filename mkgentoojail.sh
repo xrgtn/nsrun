@@ -422,13 +422,6 @@ EOF
 		die "no /var/db/repos/gentoo found, manual setup needed"
 	fi
 
-	# Generate C.UTF-8, en_US and en_US.UTF8 locales:
-	cat >>"$JAIL/etc/locale.gen" <<EOF || die
-en_US		ISO-8859-1
-en_US.UTF-8	UTF-8
-EOF
-	locale-gen -d "$JAIL/" -c "$JAIL/etc/locale.gen" || die
-
 	# Set UTC as localtime (to avoid leaking local timezone to firefox):
 	if [ -e "$JAIL/etc/localtime" ]; then
 		rm -f "$JAIL/etc/localtime" || die
@@ -445,6 +438,14 @@ $include /etc/inputrc
 "\eOB": history-search-forward
 EOF
 	cp -pr "$JAIL/root/.inputrc" "$JAIL/etc/skel/.inputrc" || die
+
+	# Generate C.UTF-8, en_US and en_US.UTF8 locales:
+	cat >>"$JAIL/etc/locale.gen" <<EOF || die
+en_US		ISO-8859-1
+en_US.UTF-8	UTF-8
+EOF
+	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C" \
+			/usr/sbin/locale-gen || die
 
 	# Create inmate user/group in jail:
 	groupadd -R "$JAIL"            -g "$JUID" "$JUSR" || die
