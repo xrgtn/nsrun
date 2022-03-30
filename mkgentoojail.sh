@@ -439,18 +439,6 @@ $include /etc/inputrc
 EOF
 	cp -pr "$JAIL/root/.inputrc" "$JAIL/etc/skel/.inputrc" || die
 
-	# Generate C.UTF-8, en_US and en_US.UTF8 locales:
-	cat >>"$JAIL/etc/locale.gen" <<EOF || die
-en_US		ISO-8859-1
-en_US.UTF-8	UTF-8
-EOF
-	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C" \
-			/usr/sbin/locale-gen || die
-
-	# Create inmate user/group in jail:
-	groupadd -R "$JAIL"            -g "$JUID" "$JUSR" || die
-	useradd  -R "$JAIL" -u "$JUID" -g "$JUID" "$JUSR" || die
-
 	# Create /etc/resolv.conf in jail:
 	printf 'nameserver %s\n' "192.168.$JNET.1" \
 		>"$JAIL/etc/resolv.conf" || die
@@ -458,9 +446,35 @@ EOF
 	# Mount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
 	mount_jail_var "$JAIL" "$JNAM"
 
-	# Set jail's locale:
+	# Generate C.UTF-8, en_US and en_US.UTF8 locales and set default
+	# jail locale to C.UTF8 (not supported on musl):
+	case "z$ST3V" in z*musl*);;
+	z?*)
+		cat >>"$JAIL/etc/locale.gen" <<EOF || die
+en_US		ISO-8859-1
+en_US.UTF-8	UTF-8
+EOF
+		if ! nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" \
+				/usr/sbin/locale-gen; then
+			umount_jail_var "$JAIL" "$JNAM"
+			die
+		fi
+		if ! nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" \
+				/usr/bin/eselect locale set C.UTF8; then
+			umount_jail_var "$JAIL" "$JNAM"
+			die
+		fi
+		;;
+	esac
+
+	# Create inmate user/group in jail:
 	if ! nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
-			/usr/bin/eselect locale set C.UTF8; then
+			/usr/sbin/groupadd -g "$JUID" "$JUSR"; then
+		umount_jail_var "$JAIL" "$JNAM"
+		die
+	fi
+	if ! nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
+			/usr/sbin/useradd -u "$JUID" -g "$JUID" "$JUSR"; then
 		umount_jail_var "$JAIL" "$JNAM"
 		die
 	fi
