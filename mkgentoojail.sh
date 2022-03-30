@@ -52,26 +52,40 @@ die() {
 
 # Derive ARCH and ST3V from current Gentoo profile:
 PROF=`readlink /etc/portage/make.profile`
-case "z$PROF" in
-z*/x86/*/selinux*)
-	ARCH="x86"
-	ST3V="i686-hardened-selinux-openrc"
+case "z$ARCH" in z)
+	case "z$PROF" in
+	z*/x86/*)	ARCH="x86";;
+	z*/amd64/*)	ARCH="amd64";;
+	z?*)		die "unsupported ARCH in profile $PROF";;
+	z)		die;;
+	esac
 	;;
-z*/x86/*)
-	ARCH="x86"
-	ST3V="i686-hardened-openrc"
-	;;
-z*/amd64/*/selinux*)
-	ARCH="amd64"
-	ST3V="amd64-hardened-nomultilib-selinux-openrc"
-	;;
-z*/amd64/*)
-	ARCH="amd64"
-	ST3V="amd64-hardened-nomultilib-openrc"
-	;;
-z?*)	die "unsupported ARCH/PROF: $PROF"
-	;;
-z)	die
+esac
+case "z$ST3V" in z)
+	case "z$PROF" in
+	z*/x86/*/selinux*)
+		ST3V="i686-hardened-selinux-openrc"
+		;;
+	z*/x86/*/musl*)
+		ST3V="i686-musl"
+		;;
+	z*/x86/*)
+		ST3V="i686-hardened-openrc"
+		;;
+	z*/amd64/*/selinux*)
+		ST3V="amd64-hardened-nomultilib-selinux-openrc"
+		;;
+	z*/amd64/*/musl*)
+		ST3V="amd64-musl-hardened"
+		;;
+	z*/amd64/*)
+		ST3V="amd64-hardened-nomultilib-openrc"
+		;;
+	z?*)	die "unsupported profile: $PROF"
+		;;
+	z)	die
+		;;
+	esac
 	;;
 esac
 
