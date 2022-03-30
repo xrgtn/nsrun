@@ -69,6 +69,7 @@
 #define _XOPEN_SOURCE	600	/* posix_openpt(), grantpt(), unlockpt(),
 				 * ptsname(), uid_t, gid_t */
 #define _POSIX_C_SOURCE	199309L	/* fchmod() */
+#define _DEFAULT_SOURCE		/* ECHOCTL, ECHOKE */
 #include <stddef.h>		/* NULL */
 #include <sys/stat.h>		/* fchmod(), mode_t */
 #include <sys/ioctl.h>		/* ioctl(), TIOCGWINSZ, TIOCSWINSZ */
@@ -274,6 +275,86 @@ EXIT1:	if (ttyfd == -1) {
 EXIT0:	return ret;
 };
 
+static int setdefmode(struct termios *t) {
+	if (t == NULL) {
+		errno = EINVAL;
+		return -1;
+	};
+	/* Clear struct termios *t: */
+	memset(t, 0, sizeof(*t));
+	/* Linux:
+	 *	.c_iflag = ICRNL | IXON,
+	 */
+	t->c_iflag = ICRNL | IXON;
+	#ifdef IUTF8
+		/* not in POSIX */
+		t->c_iflag |= IUTF8;
+	#endif
+	t->c_oflag = OPOST;
+	#ifdef ONLCR
+		/* XSI */
+		t->c_oflag |= ONLCR;
+	#endif
+	t->c_lflag = ISIG | ICANON | ECHO | ECHOE | ECHOK |
+		ECHOCTL | ECHOKE | IEXTEN;
+	/* Linux tty_std_termios:
+	 *	.c_cflag = B38400 | CS8 | CREAD | HUPCL,
+	 * Linux ptm & pts:
+	 *	.c_cflag = B38400 | CS8 | CREAD,
+	 */
+	t->c_cflag = CS8 | CREAD;
+	/* Linux:
+	 *	.c_ispeed = 38400,
+	 *	.c_ospeed = 38400,
+	 */
+	if (cfsetispeed(t, B38400) == -1) {
+		warn("cfsetispeed(): %m\n");
+		return -1;
+	};
+	if (cfsetospeed(t, B38400) == -1) {
+		warn("cfsetospeed(): %m\n");
+		return -1;
+	};
+	/* Linux:
+	 *	.c_cc =	"\003\034\177\025\004\0\1\0\021\023\032\0\022\017\027\026\0",
+	 */
+	#ifdef VDISCARD
+		/* not in POSIX, unsupported in Linux */
+		t->c_cc[VDISCARD] = '\017';
+	#endif
+	#ifdef VDSUSP
+		/* not in POSIX, unsupported in Linux */
+		t->c_cc[VDSUSP] = '\031';
+	#endif
+	#ifdef VSTATUS
+		/* not in POSIX, unsupported in Linux */
+		t->c_cc[VSTATUS] = '\024';
+	#endif
+	t->c_cc[VEOF] = '\004';
+	/* VEOL, VEOL2, VTIME and VSWTCH are 0 by default */
+	t->c_cc[VERASE] = '\010';
+	t->c_cc[VINTR] = '\003';
+	t->c_cc[VKILL] = '\025';
+	#ifdef VLNEXT
+		/* not in POSIX */
+		t->c_cc[VLNEXT] = '\026';
+	#endif
+	t->c_cc[VMIN] = '\001';
+	t->c_cc[VQUIT] = '\034';
+	#ifdef VREPRINT
+		/* not in POSIX */
+		t->c_cc[VREPRINT] = '\022';
+	#endif
+	t->c_cc[VSTART] = '\021';
+	t->c_cc[VSTOP] = '\023';
+	t->c_cc[VSUSP] = '\032';
+	#ifdef VWERASE
+		/* not in POSIX */
+		t->c_cc[VWERASE] = '\027';
+	#endif
+	return 0;
+};
+
 static int setrawmode(struct termios *t) {
 	if (t == NULL) {
 		errno = EINVAL;
@@ -324,6 +405,7 @@ int init_tty_and_setraw(int fd, int rfd, struct termios *termios_p) {
 	} else {
 		tios0.c_iflag |= IUTF8;
 		tios0.c_cc[VERASE] = '\010';	/* ^H */
+		setdefmode(&tios0);
 	};
 	/* Get/init winsz0 for fd: */
 	if (ioctl(rfd, TIOCGWINSZ, &winsz0) == -1) {
