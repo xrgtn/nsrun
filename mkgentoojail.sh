@@ -186,7 +186,34 @@ sym /dev/stderr	->	../proc/self/fd/2
 CONTENTS
 }
 
-# Validate mkdev.sh parameters:
+NL="
+"
+USAGE="USAGE: ${0##*/} [opts] /path/to/jail [action]
+where action is one of:
+  create    setup Gentoo jail
+  firefox   setup Gentoo jail and emerge firefox
+  telegram  setup jail and emerge telegram-desktop
+  update    update Gentoo in jail
+  enter     start shell in jail as regular user
+  root      start shell as root
+opts: one or more of the next options:
+  -r        rsync /var/db/repos/ to jail instead of mount
+  -s        don't mount host's /usr/src onto jail
+  --        end of options"
+
+# Get/validate mkdev.sh parameters:
+OPT_R=0
+OPT_S=0
+A=0
+while [ "z$A" != "z1" ] && [ "z$#" != "z0" ] ; do
+	case "z$1" in
+		z-r)	OPT_R=1;shift;;
+		z-s)	OPT_S=1;shift;;
+		z--)	A=1;	shift;;
+		z-*)	die "invalid option: $1$NL$USAGE";;
+		z?*)	A=1;;
+	esac
+done
 case "z$1" in
 z)	die "jail dir parameter required";;
 z/)	die "jail dir cannot be /";;
@@ -239,39 +266,57 @@ chdir_jail() {
 
 # USAGE: mount_jail_var JAIL JNAM
 mount_jail_var() {
+	# Mount/rsync /var/db/repos:
+	case "z$OPT_R" in
+	z1)	# rsync /var/db/repos:
+		rsync -auxHAXSUU -iF /var/db/repos/ \
+			"$JAIL/var/db/repos/" || die
+		;;
+	z*)	# mount /var/db/repos:
+		mount --bind /var/db/repos "$JAIL/var/db/repos" || die
+		mount --make-slave "$JAIL/var/db/repos" || die
+		;;
+	esac
+
 	# Mount /var/tmp/portage:
 	mkdir /var/tmp/portage-"$JNAM"
 	chown portage:portage /var/tmp/portage-"$JNAM"
 	chmod 0755 /var/tmp/portage-"$JNAM"
-	mkdir "$JAIL/var/tmp/portage"
+	mkdir "$JAIL/var/tmp/portage" 2>/dev/null
 	chown portage:portage "$JAIL/var/tmp/portage"
 	chmod 0755 "$JAIL/var/tmp/portage"
-	mount --bind /var/tmp/portage-"$JNAM" "$JAIL/var/tmp/portage"
-	mount --make-slave "$JAIL/var/tmp/portage"
-
-	# Mount /var/db/repos:
-	mount --bind /var/db/repos "$JAIL/var/db/repos"
-	mount --make-slave "$JAIL/var/db/repos"
+	mount --bind /var/tmp/portage-"$JNAM" "$JAIL/var/tmp/portage" || die
+	mount --make-slave "$JAIL/var/tmp/portage" || die
 
 	# Mount /var/cache/distfiles:
-	mount --bind /var/cache/distfiles "$JAIL/var/cache/distfiles"
-	mount --make-slave "$JAIL/var/cache/distfiles"
+	mount --bind /var/cache/distfiles "$JAIL/var/cache/distfiles" || die
+	mount --make-slave "$JAIL/var/cache/distfiles" || die
 
 	# Mount /var/cache/binpkgs:
-	mount --bind /var/cache/binpkgs "$JAIL/var/cache/binpkgs"
-	mount --make-slave "$JAIL/var/cache/binpkgs"
+	mount --bind /var/cache/binpkgs "$JAIL/var/cache/binpkgs" || die
+	mount --make-slave "$JAIL/var/cache/binpkgs" || die
 
-	# Mount /usr/src:
-	mount --bind /usr/src "$JAIL/usr/src"
-	mount --make-slave "$JAIL/usr/src"
+	# Optionally mount /usr/src:
+	case "z$OPT_S" in
+	z1)	;;
+	z*)	# mount /usr/src:
+		mount --bind /usr/src "$JAIL/usr/src" || die
+		mount --make-slave "$JAIL/usr/src" || die
+	esac
 }
 
 # USAGE: umount_jail_var JAIL JNAM
 umount_jail_var() {
-	umount --recursive "$JAIL/usr/src"
+	case "z$OPT_S" in
+	z1)	;;
+	z*)	umount --recursive "$JAIL/usr/src";;
+	esac
 	umount --recursive "$JAIL/var/cache/binpkgs"
 	umount --recursive "$JAIL/var/cache/distfiles"
-	umount --recursive "$JAIL/var/db/repos"
+	case "z$OPT_R" in
+	z1)	;;
+	z*)	umount --recursive "$JAIL/var/db/repos";;
+	esac
 	umount --recursive "$JAIL/var/tmp/portage"
 	rm -rf /var/tmp/portage-"$JNAM"
 }
@@ -590,7 +635,7 @@ zroot)
 	enter_jail_as_root "$1"
 	;;
 z*)
-	die "USAGE: ${0##*/}/path/to/jail {create|firefox|telegram|update|enter}"
+	die "invalid action: $2$NL$USAGE"
 	;;
 esac
 
