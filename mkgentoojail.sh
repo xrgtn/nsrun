@@ -32,7 +32,7 @@ SRV0="https://distfiles.gentoo.org"
 DSRV="https://bouncer.gentoo.org/fetch/root/all"
 # Default inmate user name and uid:
 JUSR="foobar"
-JUID=60000
+JUID0=60000
 
 # Accepts 1 or 2 arguments:
 #   die [errcode] message_pt1 [message_pt2 ...]
@@ -221,12 +221,13 @@ esac
 if ! [ -e "$1" ]; then die "$1 does not exist"; fi
 if ! [ -d "$1" ]; then die "$1 is not a directory"; fi
 
-# USAGE: chdir_jail path/to/jail
+# USAGE: chdir_jail path/to/jailX
 #
 # on return:
-#	JAIL	- /abs/path/to/jail
+#	JAIL	- /abs/path/to/jailX
 #	JNAME	- jail_basename
-#	JNET    - 0 <= JNET <= 255, (192.168.JNET.0/24)
+#	JNET    - 0 <= JNET <= 255, (192.168.X.0/24)
+#	JUID	- 60000+X (JUID0+X)
 chdir_jail() {
 	# Change to jail directory and get its absname:
 	cd "$1" || die
@@ -251,8 +252,9 @@ chdir_jail() {
 		die "invalid JNET: 192.168.$X.0/24";
 	fi
 	JNET="$X"
-	printf '%s: using 192.168.%s.0/24 network and ns%s for %s\n' \
-		"${0##*/}" "$JNET" "$JNET" "$JAIL"
+	JUID=`expr "$JUID0" + "$X"`
+	printf '%s: using 192.168.%s.0/24 net, ns%s and uid %i for %s\n' \
+		"${0##*/}" "$JNET" "$JNET" "$JUID" "$JAIL"
 
 	# Unmount jail subdirectories/submounts:
 	while read A B C; do
@@ -321,25 +323,25 @@ umount_jail_var() {
 	rm -rf /var/tmp/portage-"$JNAM"
 }
 
-# USAGE: mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR JUID firefox
-#    or  mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR JUID telegram
-#    or  mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR JUID
+# USAGE: mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR firefox
+#    or  mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR telegram
+#    or  mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR
 mkjail() {
 	chdir_jail "$1"
 	[ "z$JAIL" != "z" ] || die
 	[ "z$JNAM" != "z" ] || die
 	[ "z$JNET" != "z" ] || die
+	[ "z$JUID" != "z" ] || die
+	expr match "$JUID" '[0-9][0-9]*$' >/dev/null \
+		|| die "invalid uid: $JUID"
 	ARCH="$2"
 	ST3V="$3"
 	SRV0="$4"
 	DSRV="$5"
 	JUSR="$6"
-	JUID="$7"
-	APP="$8"
+	APP="$7"
 	expr match "$JUSR" '[a-zA-Z_][a-zA-Z0-9_]*$' >/dev/null \
 		|| die "invalid user name: $JUSR"
-	expr match "$JUID" '[0-9][0-9]*$' >/dev/null \
-		|| die "invalid uid: $JUID"
 
 	# Clean all files/directories in jail:
 	find . -mount -maxdepth 1 ! -name . -execdir rm -rf '{}' '+'
@@ -562,18 +564,18 @@ update_jail() {
 	umount_jail_var "$JAIL" "$JNAM"
 }
 
-# USAGE: enter_jail path/to/jail JUSR JUID
+# USAGE: enter_jail path/to/jail JUSR
 enter_jail() {
 	chdir_jail "$1"
 	[ "z$JAIL" != "z" ] || die
 	[ "z$JNAM" != "z" ] || die
 	[ "z$JNET" != "z" ] || die
-	JUSR="$2"
-	JUID="$3"
-	expr match "$JUSR" '[a-zA-Z_][a-zA-Z0-9_]*$' >/dev/null \
-		|| die "invalid user name: $JUSR"
+	[ "z$JUID" != "z" ] || die
 	expr match "$JUID" '[0-9][0-9]*$' >/dev/null \
 		|| die "invalid uid: $JUID"
+	JUSR="$2"
+	expr match "$JUSR" '[a-zA-Z_][a-zA-Z0-9_]*$' >/dev/null \
+		|| die "invalid user name: $JUSR"
 
 	# Update /etc/resolv.conf in jail:
 	printf 'nameserver %s\n' "192.168.$JNET.1" \
@@ -623,13 +625,13 @@ enter_jail_as_root() {
 
 case "z$2" in
 z|zcreate|zfirefox|ztelegram*)
-	mkjail "$1" "$ARCH" "$ST3V" "$SRV0" "$DSRV" "$JUSR" "$JUID" "$2"
+	mkjail "$1" "$ARCH" "$ST3V" "$SRV0" "$DSRV" "$JUSR" "$2"
 	;;
 zupdate)
 	update_jail "$1"
 	;;
 zenter)
-	enter_jail "$1" "$JUSR" "$JUID"
+	enter_jail "$1" "$JUSR"
 	;;
 zroot)
 	enter_jail_as_root "$1"
