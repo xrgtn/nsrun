@@ -560,6 +560,10 @@ update_jail() {
 	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
 		/usr/bin/emerge -vuDN @world
 
+	# Clean up unneeded packages after update (emerge --depclean):
+	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
+		/usr/bin/emerge -c
+
 	# Umount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
 	umount_jail_var "$JAIL" "$JNAM"
 }
