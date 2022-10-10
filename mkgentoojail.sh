@@ -266,8 +266,69 @@ chdir_jail() {
 	done </proc/self/mounts
 }
 
-# USAGE: mount_jail_var JAIL JNAM
+# USAGE: get_jail_jnam [JAIL [JNAM]]
+get_jail_jnam() {
+	# Check that $1/$JAIL is valid:
+	case "z$1" in z?*) JAIL="$1";; esac
+	case "z$JAIL" in z|z/) JAIL=""; return 1;; esac
+	# Check that we can chdir to $JAIL:
+	if ! pushd "$JAIL" >/dev/null; then JAIL=""; return 1; fi
+	# Check that _real_ dirname of $JAIL is valid:
+	JAIL="`pwd`"
+	popd >/dev/null
+	case "z$JAIL" in z|z/) JAIL=""; return 1;; esac
+	# Strip trailing slash:
+	JAIL="${JAIL%/}"
+
+	# Get JNAM:
+	case "z$2" in
+	z)	JNAM="${JAIL##*/}";;
+	z?*)	JNAM="$2"
+	esac
+}
+
+__umount_jail_var() {
+	case "z$OPT_S" in
+	z1)	;;
+	z*)	umount --recursive "$1/usr/src";;
+	esac
+	umount --recursive "$1/var/cache/binpkgs"
+	umount --recursive "$1/var/cache/distfiles"
+	case "z$OPT_R" in
+	z1)	;;
+	z*)	umount --recursive "$1/var/db/repos";;
+	esac
+	umount --recursive "$1/var/tmp/portage"
+	rm -rf /var/tmp/portage-"$2"
+}
+
+# USAGE: umount_jail_var [JAIL [JNAM]]
+umount_jail_var() {
+	if ! get_jail_jnam "$1" "$2"; then return; fi
+
+	# With 'trap umount_jail_var EXIT SIGINT', umount_jail_var()
+	# is called twice in bash and ash. UMNTD flag is a workaround
+	# for silencing "xxx not mounted" error messages:
+	case "z$UMNTD" in
+	z1)	__umount_jail_var "$JAIL" "$JNAM" 2>/dev/null;;
+	z*)	__umount_jail_var "$JAIL" "$JNAM";;
+	esac
+	UMNTD=1
+}
+
+# USAGE: mount_jail_var [JAIL [JNAM]]
 mount_jail_var() {
+	if ! get_jail_jnam "$1" "$2"; then return; fi
+
+	# Setup automatic unmount on error or signal.
+	# In ash 'trap foo EXIT' won't trigger on SIGINT, while
+	# 'trap foo EXIT SIGINT' will call foo() twice. There are
+	# 2 workarounds:
+	# * use 'foo() has already been triggered' flag in foo()
+	# * define empty function bar() and set 'trap bar SIGINT'
+	#   alongside 'trap foo EXIT'
+	trap umount_jail_var EXIT SIGINT SIGHUP SIGTERM
+
 	# Mount/rsync /var/db/repos:
 	case "z$OPT_R" in
 	z1)	# rsync /var/db/repos:
@@ -302,25 +363,9 @@ mount_jail_var() {
 	case "z$OPT_S" in
 	z1)	;;
 	z*)	# mount /usr/src:
-		mount --bind /usr/src "$JAIL/usr/src" || die
-		mount --make-slave "$JAIL/usr/src" || die
+		mount --rbind /usr/src "$JAIL/usr/src" || die
+		mount --make-rslave "$JAIL/usr/src" || die
 	esac
-}
-
-# USAGE: umount_jail_var JAIL JNAM
-umount_jail_var() {
-	case "z$OPT_S" in
-	z1)	;;
-	z*)	umount --recursive "$JAIL/usr/src";;
-	esac
-	umount --recursive "$JAIL/var/cache/binpkgs"
-	umount --recursive "$JAIL/var/cache/distfiles"
-	case "z$OPT_R" in
-	z1)	;;
-	z*)	umount --recursive "$JAIL/var/db/repos";;
-	esac
-	umount --recursive "$JAIL/var/tmp/portage"
-	rm -rf /var/tmp/portage-"$JNAM"
 }
 
 # USAGE: mkjail path/to/jail ARCH ST3V SRV0 DSRV JUSR firefox
@@ -403,6 +448,7 @@ EOF
 media-libs/libglvnd	X
 media-libs/libvpx	postproc
 x11-libs/cairo		X
+x11-libs/libxkbcommon	X
 EOF
 		case "z$ARCH" in zx86)
 			cat >>"$JAIL/etc/portage/package.use/local.use" \
@@ -501,42 +547,43 @@ EOF
 en_US		ISO-8859-1
 en_US.UTF-8	UTF-8
 EOF
-		if ! nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" \
-				/usr/sbin/locale-gen; then
-			umount_jail_var "$JAIL" "$JNAM"
-			die
-		fi
-		if ! nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" \
-				/usr/bin/eselect locale set C.UTF8; then
-			umount_jail_var "$JAIL" "$JNAM"
-			die
-		fi
+		nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" \
+			/usr/sbin/locale-gen || die
+		nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" \
+			/usr/bin/eselect locale set C.UTF8 || die
 		;;
 	esac
 
 	# Create inmate user/group in jail:
-	if ! nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
-			/usr/sbin/groupadd -g "$JUID" "$JUSR"; then
-		umount_jail_var "$JAIL" "$JNAM"
-		die
-	fi
-	if ! nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
-			/usr/sbin/useradd -u "$JUID" -g "$JUID" "$JUSR"; then
-		umount_jail_var "$JAIL" "$JNAM"
-		die
-	fi
+	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
+		/usr/sbin/groupadd -g "$JUID" "$JUSR" || die
+	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
+		/usr/sbin/useradd -u "$JUID" -g "$JUID" "$JUSR" || die
+
+	# Update sys-apps/portage first to avoid situatios like this:
+	#
+	# !!! The following installed packages are masked:
+	# - sys-apps/portage-3.0.37::gentoo (masked by: package.mask)
+	# /var/db/repos/gentoo/profiles/package.mask:
+	# # Sam James <sam@gentoo.org> (2022-10-04)
+	# # Please upgrade to >= portage-3.0.38.1 for binpkg fixes.
+	# # bug #870283, bug #874771.
+	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
+		/usr/bin/emerge -uv1 sys-apps/portage || die
 
 	# Emerge firefox/telegram in jail:
+	TGTPKG=""
 	case "z$APP" in
-	zfirefox*)
-		nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
-			/usr/bin/emerge -av www-client/firefox
-		;;
-	ztelegram*)
-		nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
-			/usr/bin/emerge -av net-im/telegram-desktop
-		;;
+	zfirefox*)	TGTPKG="www-client/firefox";;
+	ztelegram*)	TGTPKG="net-im/telegram-desktop";;
 	esac
+	if [ "z$TGTPKG" != "z" ]; then
+		# Fetch files first:
+		nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
+			/usr/bin/emerge -fv "$TGTPKG" || die
+		nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
+			/usr/bin/emerge -v "$TGTPKG"
+	fi
 
 	# Umount /var/tmp/portage, /var/db/repos and /var/cache/distfiles:
 	umount_jail_var "$JAIL" "$JNAM"
