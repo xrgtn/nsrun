@@ -298,6 +298,77 @@ static int print_caps(void) {
 	return ret;
 };
 
+int oldns_main(int rfd, int wfd, int mntc, struct src_tgt *mnt) {
+	char ping;
+	int i, ret = EXIT_SUCCESS;
+	char *s;
+	pid_t p;
+
+	/* Wait for ping from parent: */
+	while (1) {
+		if (!readall(rfd, &ping, 1, "pipe to oldns"))
+			goto EXIT1;
+		debug("oldns received '%.1s' cmd\n", &ping);
+		switch (ping) {
+		case 'm':
+			/* Do bind mounts: */
+			ret = EXIT_SUCCESS;
+			for (i = 0; i < mntc; i++) {
+				if (0 != mount(mnt[i].src, mnt[i].tgt,
+						NULL, MS_BIND, NULL)) {
+					ret = EXIT_FAILURE;
+					warn("mount --bind %s %s: %m\n",
+						mnt[i].src, mnt[i].tgt);
+				};
+			};
+			break;
+		case 'w':
+			/* Write /proc/$PID/uid_map, setgroups, and
+			 * gid_map */
+			ret = EXIT_SUCCESS;
+			if (!readall(rfd, (char *)&p, sizeof(p),
+					"pipe to oldns"))
+				goto EXIT1;
+			if (asprintf(&s, "/proc/%u/uid_map", p) == -1)
+				goto EXIT1;
+			if (!writestr1(s, "0 0 65534\n"))
+				ret = EXIT_FAILURE;
+			free(s);
+			if (asprintf(&s, "/proc/%u/setgroups", p)
+					== -1)
+				goto EXIT1;
+			if (!writestr1(s, "allow"))
+				ret = EXIT_FAILURE;
+			free(s);
+			if (asprintf(&s, "/proc/%u/gid_map", p) == -1)
+				goto EXIT1;
+			if (!writestr1(s, "0 0 65534\n"))
+				ret = EXIT_FAILURE;
+			free(s);
+			break;
+		case 'q':
+			/* Quit: */
+			goto EXIT0;
+		default:
+			err("invalid oldns cmd '%.1s'\n", &ping);
+			goto EXIT1;
+		};
+		/* Send cmd result to parent: */
+		if (!writeall(wfd, (char *)&ret, sizeof(ret),
+				"pipe from oldns"))
+			goto EXIT1;
+	};
+
+EXIT0:	while (mntc > 0) {
+		if (mnt[--mntc].src != NULL)
+			free(mnt[mntc].src);
+	};
+	return ret;
+
+EXIT1:	ret = EXIT_FAILURE;
+	goto EXIT0;
+}
+
 /* man 3p exec:
  *
  * Since this volume of POSIX.1‐2017 defines the global variable environ, which
@@ -495,65 +566,11 @@ int main(int argc, char *argv[]) {
 		/* Close read side of "from" pipe: */
 		close(from_oldns_pipefd[0]);
 		from_oldns_pipefd[0] = -1;
-		/* Wait for ping from parent: */
-		while (1) {
-			if (!readall(to_oldns_pipefd[0], &ping, 1,
-					"pipe to oldns"))
-				goto EXIT1;
-			debug("oldns received '%.1s' cmd\n", &ping);
-			switch (ping) {
-			case 'm':
-				/* Do bind mounts: */
-				for (i = 0; i < mntc; i++) {
-					if (0 != mount(mnt[i].src, mnt[i].tgt,
-							NULL, MS_BIND, NULL)) {
-						ret = EXIT_FAILURE;
-						warn("mount --bind %s %s:"
-							" %m\n",
-							mnt[i].src,
-							mnt[i].tgt);
-					};
-				};
-				break;
-			case 'w':
-				/* Write /proc/$PID/uid_map, setgroups, and
-				 * gid_map */
-				char *s;
-				pid_t p;
-				if (!readall(to_oldns_pipefd[0], (char *)&p,
-						sizeof(p), "pipe to oldns"))
-					goto EXIT1;
-				if (asprintf(&s, "/proc/%u/uid_map", p) == -1)
-					goto EXIT1;
-				if (!writestr1(s, "0 0 65534\n"))
-					ret = EXIT_FAILURE;
-				free(s);
-				if (asprintf(&s, "/proc/%u/setgroups", p)
-						== -1)
-					goto EXIT1;
-				if (!writestr1(s, "allow"))
-					ret = EXIT_FAILURE;
-				free(s);
-				if (asprintf(&s, "/proc/%u/gid_map", p) == -1)
-					goto EXIT1;
-				if (!writestr1(s, "0 0 65534\n"))
-					ret = EXIT_FAILURE;
-				free(s);
-				break;
-			case 'q':
-				/* Quit: */
-				goto EXIT0;
-			default:
-				err("invalid oldns cmd '%.1s'\n", &ping);
-				goto EXIT1;
-			};
-			/* Send cmd result to parent: */
-			if (!writeall(from_oldns_pipefd[1], (char *)&ret,
-					sizeof(ret), "pipe from oldns"))
-				goto EXIT1;
-		};
-		/* XXX: unreachable statement: */
-		goto EXIT1;
+		/* Free option values: */
+		freeoptv(o);
+		/* Wait-for/execute cmds from parent and exit: */
+		return oldns_main(to_oldns_pipefd[0], from_oldns_pipefd[1],
+			mntc, mnt);
 	} else {
 		/* Close read side of "to" pipe: */
 		close(to_oldns_pipefd[0]);
