@@ -721,8 +721,8 @@ int main(int argc, char *argv[]) {
 		err("fork(runner): %m\n");
 		goto EXIT1;
 	} else if (runner_pid == 0) {
-		/* Runner child don't have any use for pipe to/from its
-		 * sibling: */
+		/* Runner child doesn't have any use for pipe to/from its
+		 * 'oldns' sibling: */
 		close(to_oldns_pipefd[1]);
 		to_oldns_pipefd[1] = -1;
 		close(from_oldns_pipefd[0]);
@@ -816,7 +816,30 @@ int main(int argc, char *argv[]) {
 		close(from_oldns_pipefd[0]);
 		from_oldns_pipefd[0] = -1;
 
-		goto EXEC_RUNNER;
+		/* Send 'r' to runner child after oldns finishes: */
+		ping = 'r';
+		if (!writeall(runner_pipefd[1], &ping, 1, "pipe to runner")) {
+			kill(runner_pid, SIGKILL);
+			goto EXIT1;
+		}
+
+		/* Wait for runner child to exit and that's it: */
+		while ((wpid = waitpid(runner_pid, &wstatus, 0))
+				== runner_pid) {
+			if (WIFEXITED(wstatus) || WIFSIGNALED(wstatus)) break;
+		};
+		if (wpid != runner_pid) {
+			err("waitpid(%u(runner)): %m\n", runner_pid);
+			ret = EXIT_FAILURE;
+		} else if (WIFEXITED(wstatus)) {
+			ret = WEXITSTATUS(wstatus);
+		} else if (WIFSIGNALED(wstatus)) {
+			/* Commit suicide with the same weapon that killed
+			 * our beloved child: */
+			kill(pid, WTERMSIG(wstatus));
+		};
+
+		goto EXIT0;
 	};
 
 RUNNER:
@@ -1024,29 +1047,6 @@ RUNNER:
 	/* Successful exec() doesn't return, so... */
 	err("execve(%s): %m\n", runargv[0]);
 	goto EXIT1;
-
-EXEC_RUNNER:
-	/* Send 'r' to runner child after oldns finishes: */
-	ping = 'r';
-	if (!writeall(runner_pipefd[1], &ping, 1, "pipe to runner")) {
-		kill(runner_pid, SIGKILL);
-		goto EXIT1;
-	}
-
-	/* Wait for runner child to exit and that's it: */
-	while ((wpid = waitpid(runner_pid, &wstatus, 0)) == runner_pid) {
-		if (WIFEXITED(wstatus) || WIFSIGNALED(wstatus)) break;
-	};
-	if (wpid != runner_pid) {
-		err("waitpid(%u(runner)): %m\n", runner_pid);
-		ret = EXIT_FAILURE;
-	} else if (WIFEXITED(wstatus)) {
-		ret = WEXITSTATUS(wstatus);
-	} else if (WIFSIGNALED(wstatus)) {
-		/* Commit suicide with the same weapon that killed
-		 * our beloved child: */
-		kill(pid, WTERMSIG(wstatus));
-	};
 
 EXIT0:	if (pw != NULL) free(pw);
 	if (nspidfd != -1)
