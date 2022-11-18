@@ -369,6 +369,256 @@ EXIT1:	ret = EXIT_FAILURE;
 	goto EXIT0;
 }
 
+/* Cmdline options: */
+enum optkeys {opt_e, opt_h, opt_l, opt_r, opt_P,
+	opt_i, opt_m, opt_n, opt_p, opt_u, opt_C, opt_T, opt_U,
+	opt_t, opt_inv};
+
+struct namespace {
+	int	type;
+	char	*fmt;
+	int	fd;
+	const char *fn;
+};
+
+int runner_main(char **argv, struct opt *o, struct namespace *nsp,
+		int unshared, struct ugids cr) {
+	int ret = EXIT_FAILURE;
+	int chrooted = 0;
+	int i;
+	char *newhostname = "localhost";
+	pid_t exec_pid = 1, wpid;
+	int wstatus = 0;
+	/* envp/argv to run: */
+	char *runprog = NULL;		/* executable [path]name */
+	char *shell = "/bin/sh";	/* default shell */
+	char *defargv[2] = {shell, NULL};
+	char **runargv = defargv;
+	char *logname = NULL, *term = NULL;
+	char *defpath[] = {"/sbin:/bin:/usr/sbin:/usr/bin", "/bin:/usr/bin"};
+	char *path = defpath[1];
+	char *home = NULL;
+	struct passwb *pw = NULL;
+
+	print_caps();
+
+	/* Do chroot()/pivot_root() after creating/entering new namespaces
+	 * and mapping uid/gid: */
+	if (o[opt_r].val != NULL) {
+		if (unshared & CLONE_NEWNS) {
+			if (pivotrootdir(o[opt_r].val)) {
+				info("pivoted root to %s\n", o[opt_r].val);
+				chrooted++;
+			} else if (chrootdir(o[opt_r].val)) {
+				info("changed root to %s\n", o[opt_r].val);
+				chrooted++;
+			} else {
+				goto EXIT1;
+			};
+		} else {
+			if (chrootdir(o[opt_r].val)) {
+				info("changed root to %s\n", o[opt_r].val);
+				chrooted++;
+			} else {
+				goto EXIT1;
+			};
+		};
+	};
+
+	/* Mounr procfs on /proc if in chroot or in new mount namespace.
+	 * Ditto with devpts, shmem and mqueue: */
+	if (chrooted || unshared & CLONE_NEWNS) {
+		int fd = -1;
+		int proc = 0, pci = 0, pdev = 0,
+			mq = 0, pts = 0, shm = 0, run = 0, m = 0;
+		/* Mount /proc and empty /proc/bus/pci/devices: */
+		if (mount("proc", "/proc", "proc",
+				MS_NODEV | MS_NOEXEC | MS_NOSUID,
+				NULL) == 0)
+			proc = 1;
+		else
+			warn("mount -t proc proc /proc: %m\n");
+		if (proc) {
+			if (mount("x", "/proc/bus/pci", "tmpfs",
+					MS_NODEV | MS_NOEXEC | MS_NOSUID,
+					"nr_blocks=128,nr_inodes=32") == 0)
+				pci = 1;
+			else
+				warn("mount -t tmpfs x /proc/bus/pci: %m\n");
+		};
+		if (pci) {
+			if ((fd = open("/proc/bus/pci/devices",
+					O_WRONLY | O_CREAT | O_TRUNC, 0644))
+					!= -1) {
+				pdev = 1;
+				close(fd);
+			} else {
+				warn("creat(/proc/bus/pci/devices): %m\n");
+			};
+		};
+
+		/* Mount /dev subsystems: */
+		if (unshared & CLONE_NEWIPC) {
+			if (mount("mq", "/dev/mqueue", "mqueue", MS_NODEV |
+					MS_NOEXEC | MS_NOSUID, NULL) == 0)
+				mq = 1;
+			else
+				warn("mount -t mqueue mq /dev/mqueue: %m\n");
+		};
+		if (mount("pts", "/dev/pts", "devpts",
+				MS_NOEXEC | MS_NOSUID, NULL) == 0)
+			pts = 1;
+		else
+			warn("mount -t devpts pts /dev/pts: %m\n");
+		if (mount("shm", "/dev/shm", "tmpfs", MS_NODEV |
+				MS_NOEXEC | MS_NOSUID, NULL) == 0)
+			shm = 1;
+		else
+			warn("mount -t tmpfs shm /dev/shm: %m\n");
+		if (mount("run", "/run", "tmpfs", MS_NODEV |
+				MS_NOEXEC | MS_NOSUID,
+				"nr_inodes=2048,nr_blocks=8192") == 0)
+			run = 1;
+		else
+			warn("mount -t tmpfs run /run: %m\n");
+
+		/* Report what has been mounted: */
+		if (proc | pci | pdev | mq | pts | shm | run) {
+			info("mounted");
+			if (proc) info2("%s /proc", m++ ? "," : "");
+			if (pci)  info2("%s /proc/bus/pci", m++ ? "," : "");
+			if (pdev) info2("%s /proc/bus/pci/devices",
+				m++ ? "," : "");
+			if (mq)   info2("%s /dev/mqueue", m++ ? "," : "");
+			if (pts)  info2("%s /dev/pts", m++ ? "," : "");
+			if (shm)  info2("%s /dev/shm", m++ ? "," : "");
+			if (run)  info2("%s /run", m++ ? "," : "");
+			info2("\n");
+		};
+	};
+
+	/* Reset hostname if unshared CLONE_NEWUTS */
+	if (unshared & CLONE_NEWUTS) {
+		if (sethostname(newhostname, strlen(newhostname)) == 0)
+			info("set hostname to \"%s\"\n", newhostname);
+		else
+			warn("set hostname to \"%s\": %m\n", newhostname);
+	};
+
+	exec_pid = fork();
+	if (exec_pid == -1) {
+		err("fork(exec): %m\n");
+		goto EXIT1;
+	} else if (exec_pid != 0) {
+		/* Here we do duties of /sbin/init, namely reaping zombie
+		 * processes while waiting for exec_pid to finish. */
+		int r, f = 0;
+		do {
+			wpid = wait(&wstatus);
+			if (wpid == exec_pid) {
+				r = wstatus;
+				f = 1;
+			};
+		} while (!(wpid == -1 && errno != EINTR));
+		if (wpid == -1 && errno != ECHILD) {
+			/* ECHILD: The calling process has no existing
+			 * unwaited-for child processes.
+			 * I.e. all children have already terminated. */
+			err("wait(): %m\n");
+			ret = EXIT_FAILURE;
+		} else if (!f) {
+			ret = EXIT_FAILURE;
+		} else if (WIFEXITED(r)) {
+			ret = WEXITSTATUS(r);
+		} else if (WIFSIGNALED(r)) {
+			ret = EXIT_FAILURE;
+			/* Commit suicide with the same signal, to relay
+			 * exec_pid's exact wstatus to our parent: */
+			kill(getpid(), WTERMSIG(r));
+		};
+		goto EXIT0;
+	};
+
+	/* From here on it's exec_pid running: */
+
+	/* Get user's shell & co if there's nothing left on cmdline: */
+	pw = getpwb(cr.euid);
+	if (pw == NULL || pw->pwd.pw_shell == NULL
+			|| pw->pwd.pw_shell[0] == '\0') {
+		warn("no shell for uid %u, fallback to %s\n", cr.euid, shell);
+	} else {
+		shell = pw->pwd.pw_shell;
+	};
+
+	/* Calculate values for user's new env: */
+	term = getenv("TERM");
+	path = defpath[cr.euid == 0 ? 0 : 1];
+	logname = (pw != NULL && pw->pwd.pw_name != NULL
+		&& pw->pwd.pw_name[0] != '\0') ? pw->pwd.pw_name
+		: (cr.euid == 0) ? "root" : "nobody";
+	home = (pw != NULL && pw->pwd.pw_dir != NULL
+		&& pw->pwd.pw_dir[0] != '\0') ? pw->pwd.pw_dir
+		: (cr.euid == 0) ? "/root" : "/var/empty";
+	/* Reset user's env: */
+	environ = NULL;
+	if (setenv("PATH", path, 1) != 0)
+		warn("setenv(PATH=%s), %m\n", path);
+	if (setenv("SHELL", shell, 1) != 0)
+		warn("setenv(SHELL=%s), %m\n", shell);
+	if (setenv("USER", logname, 1) != 0)
+		warn("setenv(USER=%s), %m\n", logname);
+	if (setenv("LOGNAME", logname, 1) != 0)
+		warn("setenv(LOGNAME=%s), %m\n", logname);
+	if (setenv("HOME", home, 1) != 0)
+		warn("setenv(HOME=%s), %m\n", home);
+	if (term != NULL) {
+		if (setenv("TERM", term, 1) != 0)
+			warn("setenv(TERM=%s), %m\n", term);
+	};
+	if (o[opt_P].cnt > 0) {
+		for (i = 0; i < o[opt_P].cnt; i++) {
+			if (o[opt_P].vals[i] != NULL) {
+				if (putenv(o[opt_P].vals[i]) != 0)
+					warn("putenv(%s), %m\n",
+						o[opt_P].vals[i]);
+			};
+		};
+	};
+
+	/* Run specified command (or shell): */
+	if (argv[0] != NULL) {
+		runargv = argv;
+	} else {
+		defargv[0] = shell;
+		defargv[1] = NULL;
+		runargv = defargv;
+	};
+	/* Prepend '-' character in-place if necesary: */
+	runprog = runargv[0];
+	if (o[opt_l].cnt) {
+		if (asprintf(runargv, "-%s", runprog) <= 0)
+			runargv[0] = runprog;
+	};
+	info("executing %s\n", runargv[0]);
+	execve(runprog, runargv, environ);
+	/* Successful exec() doesn't return, so... */
+	err("execve(%s): %m\n", runargv[0]);
+	goto EXIT1;
+
+EXIT0:	if (pw != NULL) free(pw);
+	for (i = opt_i; i <= opt_U; i++) {
+		if (nsp[i].fd != -1)
+			close(nsp[i].fd);
+	};
+	if (exec_pid != -1 && exec_pid != 0)
+		kill(exec_pid, SIGKILL);
+	freeoptv(o);
+	return ret;
+
+EXIT1:	ret = EXIT_FAILURE;
+	goto EXIT0;
+}
+
 /* man 3p exec:
  *
  * Since this volume of POSIX.1‐2017 defines the global variable environ, which
@@ -380,30 +630,18 @@ EXIT1:	ret = EXIT_FAILURE;
  * syscall(SYS_pidfd_open, ...))
  */
 int main(int argc, char *argv[]) {
-	int ret = EXIT_FAILURE, i, loginshell = 0;
+	int ret = EXIT_FAILURE, i;
 	char *chp;
-	/* envp/argv to run: */
-	char *runprog = NULL;		/* executable [path]name */
-	char *shell = "/bin/sh";	/* default shell */
-	char *defargv[2] = {shell, NULL};
-	char **runargv = defargv;
-	char *logname = NULL, *term = NULL;
-	char *defpath[] = {"/sbin:/bin:/usr/sbin:/usr/bin", "/bin:/usr/bin"};
-	char *path = defpath[1];
-	char *home = NULL;
-	struct passwb *pw = NULL;
 	/* Creds: */
 	struct ugids cr1, cr2;
 	int ngroups = 0;
 	/* TTY params: */
 	struct termios ttios;
 	/* Cmdline options and results of optparsing: : */
-	enum optkeys {opt_e, opt_h, opt_r, opt_P,
-		opt_i, opt_m, opt_n, opt_p, opt_u, opt_C, opt_T, opt_U,
-		opt_t, opt_inv};
 	struct opt o[] = {
 		[opt_e] = {'e', REQUIRED_VAL},
 		[opt_h] = {'h', NO_VAL},
+		[opt_l] = {'l', NO_VAL},
 		[opt_r] = {'r', REQUIRED_VAL},
 		[opt_P] = {'P', MULTI_VAL | REQUIRED_VAL},
 		[opt_i] = {'i', OPTIONAL_VAL},
@@ -419,12 +657,7 @@ int main(int argc, char *argv[]) {
 	};
 	int arg1;	/* index of 1st non-option arg */
 	char opt_e_chr = '\0';
-	struct {
-		int	type;
-		char	*fmt;
-		int	fd;
-		const char *fn;
-	} nsp[] = {
+	struct namespace nsp[] = {
 		[opt_i] = {CLONE_NEWIPC,	"/proc/%u/ns/ipc",	-1},
 		[opt_m] = {CLONE_NEWNS,		"/proc/%u/ns/mnt",	-1},
 		[opt_n] = {CLONE_NEWNET,	"/proc/%u/ns/net",	-1},
@@ -439,22 +672,19 @@ int main(int argc, char *argv[]) {
 	int setns_flags = 0;
 	int unshare_flags = 0;
 	int unshared = 0;
-	int chrooted = 0;
 	int nspidfd = -1;
 	int nspidfd_type = CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWNET |
 		CLONE_NEWPID | CLONE_NEWUTS | CLONE_NEWCGROUP | CLONE_NEWTIME |
 		CLONE_NEWUSER;
-	char *newhostname = "localhost";
 	/* Array of required src=>tgt pairs to be bind mounted: */
 	struct src_tgt mnt[opt_U - opt_i + 1];
 	int mntc = 0;	/* actual number of elements in mnt[] */
-	pid_t pid, oldns_pid = -1, runner_pid = -1, exec_pid = 1, wpid;
+	pid_t pid, oldns_pid = -1, runner_pid = -1, wpid;
 	int to_oldns_pipefd[2] = {-1, -1};
 	int from_oldns_pipefd[2] = {-1, -1};
 	int runner_pipefd[2] = {-1, -1};
 	char ping = '!';
 	int wstatus = 0;
-	ssize_t ssz_ret;
 
 	/* Get progname as basename(argv[0]): */
 	if (argv[0] != NULL && argv[0][0] != '\0') {
@@ -466,7 +696,7 @@ int main(int argc, char *argv[]) {
 
 	/* If we are run with "-" in front of name, set loginshell flag: */
 	if (argv[0] != NULL && argv[0][0] == '-')
-		loginshell = 1;
+		o[opt_l].cnt++;
 
 	/* Parse options: */
 	arg1 = getoptv(o, argv);
@@ -488,6 +718,7 @@ int main(int argc, char *argv[]) {
 			" opts:\n"
 			" -e=C    set tty erase char to C.\n"
 			" -h      print this USAGE message\n"
+			" -l      login shell mode (prepend '-' to prog)\n"
 			" -r=DIR  chroot to DIR before setns()/unshare() if"
 				" not creating new user\n"
 			"         namespace or after setns()/unshare()"
@@ -743,10 +974,11 @@ int main(int argc, char *argv[]) {
 			goto EXIT1;
 		};
 		/* After we're done reading commands from parent,
-		 * close the pipe and go run: */
+		 * close read side of pipe too, and go run: */
 		close(runner_pipefd[0]);
 		runner_pipefd[0] = -1;
-		goto RUNNER;
+
+		return runner_main(argv + arg1, o, nsp, unshared, cr2);
 	} else {
 		/* Parent side after fork:
 		 * 1. close read side of runner pipe;
@@ -842,214 +1074,8 @@ int main(int argc, char *argv[]) {
 		goto EXIT0;
 	};
 
-RUNNER:
-	print_caps();
 
-	/* Do chroot()/pivot_root() after creating/entering new namespaces
-	 * and mapping uid/gid: */
-	if (o[opt_r].val != NULL) {
-		if (unshared & CLONE_NEWNS) {
-			if (pivotrootdir(o[opt_r].val)) {
-				info("pivoted root to %s\n", o[opt_r].val);
-				chrooted++;
-			} else if (chrootdir(o[opt_r].val)) {
-				info("changed root to %s\n", o[opt_r].val);
-				chrooted++;
-			} else {
-				goto EXIT1;
-			};
-		} else {
-			if (chrootdir(o[opt_r].val)) {
-				info("changed root to %s\n", o[opt_r].val);
-				chrooted++;
-			} else {
-				goto EXIT1;
-			};
-		};
-	};
-
-	/* Map proc fs in chroot or over /proc if in new mount namespace.
-	 * Ditto with devpts, shmem and mqueue: */
-	if (chrooted || unshared & CLONE_NEWNS) {
-		int fd = -1;
-		int proc = 0, pci = 0, pdev = 0,
-			mq = 0, pts = 0, shm = 0, run = 0, m = 0;
-		/* Mount /proc and empty /proc/bus/pci/devices: */
-		if (mount("proc", "/proc", "proc",
-				MS_NODEV | MS_NOEXEC | MS_NOSUID,
-				NULL) == 0)
-			proc = 1;
-		else
-			warn("mount -t proc proc /proc: %m\n");
-		if (proc) {
-			if (mount("x", "/proc/bus/pci", "tmpfs",
-					MS_NODEV | MS_NOEXEC | MS_NOSUID,
-					"nr_blocks=128,nr_inodes=32") == 0)
-				pci = 1;
-			else
-				warn("mount -t tmpfs x /proc/bus/pci: %m\n");
-		};
-		if (pci) {
-			if ((fd = open("/proc/bus/pci/devices",
-					O_WRONLY | O_CREAT | O_TRUNC, 0644))
-					!= -1) {
-				pdev = 1;
-				close(fd);
-			} else {
-				warn("creat(/proc/bus/pci/devices): %m\n");
-			};
-		};
-
-		/* Mount /dev subsystems: */
-		if (unshared & CLONE_NEWIPC) {
-			if (mount("mq", "/dev/mqueue", "mqueue", MS_NODEV |
-					MS_NOEXEC | MS_NOSUID, NULL) == 0)
-				mq = 1;
-			else
-				warn("mount -t mqueue mq /dev/mqueue: %m\n");
-		};
-		if (mount("pts", "/dev/pts", "devpts",
-				MS_NOEXEC | MS_NOSUID, NULL) == 0)
-			pts = 1;
-		else
-			warn("mount -t devpts pts /dev/pts: %m\n");
-		if (mount("shm", "/dev/shm", "tmpfs", MS_NODEV |
-				MS_NOEXEC | MS_NOSUID, NULL) == 0)
-			shm = 1;
-		else
-			warn("mount -t tmpfs shm /dev/shm: %m\n");
-		if (mount("run", "/run", "tmpfs", MS_NODEV |
-				MS_NOEXEC | MS_NOSUID,
-				"nr_inodes=2048,nr_blocks=8192") == 0)
-			run = 1;
-		else
-			warn("mount -t tmpfs run /run: %m\n");
-
-		/* Report what has been mounted: */
-		if (proc | pci | pdev | mq | pts | shm | run) {
-			info("mounted");
-			if (proc) info2("%s /proc", m++ ? "," : "");
-			if (pci)  info2("%s /proc/bus/pci", m++ ? "," : "");
-			if (pdev) info2("%s /proc/bus/pci/devices",
-				m++ ? "," : "");
-			if (mq)   info2("%s /dev/mqueue", m++ ? "," : "");
-			if (pts)  info2("%s /dev/pts", m++ ? "," : "");
-			if (shm)  info2("%s /dev/shm", m++ ? "," : "");
-			if (run)  info2("%s /run", m++ ? "," : "");
-			info2("\n");
-		};
-	};
-
-	/* Reset hostname if unshared CLONE_NEWUTS */
-	if (unshared & CLONE_NEWUTS) {
-		if (sethostname(newhostname, strlen(newhostname)) == 0)
-			info("set hostname to \"%s\"\n", newhostname);
-		else
-			warn("set hostname to \"%s\": %m\n", newhostname);
-	};
-
-	exec_pid = fork();
-	if (exec_pid == -1) {
-		err("fork(exec): %m\n");
-		goto EXIT1;
-	} else if (exec_pid != 0) {
-		/* Here we do duties of /sbin/init, namely reaping zombie
-		 * processes while waiting for exec_pid to finish. */
-		int r, f = 0;
-		do {
-			wpid = wait(&wstatus);
-			if (wpid == exec_pid) {
-				r = wstatus;
-				f = 1;
-			};
-		} while (!(wpid == -1 && errno != EINTR));
-		if (wpid == -1 && errno != ECHILD) {
-			/* ECHILD: The calling process has no existing
-			 * unwaited-for child processes.
-			 * I.e. all children have already terminated. */
-			err("wait(): %m\n");
-			ret = EXIT_FAILURE;
-		} else if (!f) {
-			ret = EXIT_FAILURE;
-		} else if (WIFEXITED(r)) {
-			ret = WEXITSTATUS(r);
-		} else if (WIFSIGNALED(r)) {
-			ret = EXIT_FAILURE;
-			/* Commit suicide with the same signal, to relay
-			 * exec_pid's exact wstatus to our parent: */
-			kill(getpid(), WTERMSIG(r));
-		};
-		goto EXIT0;
-	};
-
-	/* From here on it's exec_pid running: */
-
-	/* Get user's shell & co if there's nothing left on cmdline: */
-	pw = getpwb(cr2.euid);
-	if (pw == NULL || pw->pwd.pw_shell == NULL
-			|| pw->pwd.pw_shell[0] == '\0') {
-		warn("no shell for uid %u, fallback to %s\n", cr2.euid, shell);
-	} else {
-		shell = pw->pwd.pw_shell;
-	};
-
-	/* Calculate values for user's new env: */
-	term = getenv("TERM");
-	path = defpath[cr2.euid == 0 ? 0 : 1];
-	logname = (pw != NULL && pw->pwd.pw_name != NULL
-		&& pw->pwd.pw_name[0] != '\0') ? pw->pwd.pw_name
-		: (cr2.euid == 0) ? "root" : "nobody";
-	home = (pw != NULL && pw->pwd.pw_dir != NULL
-		&& pw->pwd.pw_dir[0] != '\0') ? pw->pwd.pw_dir
-		: (cr2.euid == 0) ? "/root" : "/var/empty";
-	/* Reset user's env: */
-	environ = NULL;
-	if (setenv("PATH", path, 1) != 0)
-		warn("setenv(PATH=%s), %m\n", path);
-	if (setenv("SHELL", shell, 1) != 0)
-		warn("setenv(SHELL=%s), %m\n", shell);
-	if (setenv("USER", logname, 1) != 0)
-		warn("setenv(USER=%s), %m\n", logname);
-	if (setenv("LOGNAME", logname, 1) != 0)
-		warn("setenv(LOGNAME=%s), %m\n", logname);
-	if (setenv("HOME", home, 1) != 0)
-		warn("setenv(HOME=%s), %m\n", home);
-	if (term != NULL) {
-		if (setenv("TERM", term, 1) != 0)
-			warn("setenv(TERM=%s), %m\n", term);
-	};
-	if (o[opt_P].cnt > 0) {
-		for (i = 0; i < o[opt_P].cnt; i++) {
-			if (o[opt_P].vals[i] != NULL) {
-				if (putenv(o[opt_P].vals[i]) != 0)
-					warn("putenv(%s), %m\n",
-						o[opt_P].vals[i]);
-			};
-		};
-	};
-
-	/* Run specified command (or shell): */
-	if (argv[arg1] != NULL) {
-		runargv = argv + arg1;
-	} else {
-		defargv[0] = shell;
-		defargv[1] = NULL;
-		runargv = defargv;
-	};
-	/* Prepend '-' character in-place if necesary: */
-	runprog = runargv[0];
-	if (loginshell) {
-		if (asprintf(runargv, "-%s", runprog) <= 0)
-			runargv[0] = runprog;
-	};
-	info("executing %s\n", runargv[0]);
-	execve(runprog, runargv, environ);
-	/* Successful exec() doesn't return, so... */
-	err("execve(%s): %m\n", runargv[0]);
-	goto EXIT1;
-
-EXIT0:	if (pw != NULL) free(pw);
-	if (nspidfd != -1)
+EXIT0:	if (nspidfd != -1)
 		close(nspidfd);
 	for (i = opt_i; i <= opt_U; i++) {
 		if (nsp[i].fd != -1)
@@ -1063,8 +1089,6 @@ EXIT0:	if (pw != NULL) free(pw);
 		if (runner_pipefd[i] != -1)
 			close(runner_pipefd[i]);
 	};
-	if (exec_pid != -1 && exec_pid != 0)
-		kill(exec_pid, SIGKILL);
 	if (runner_pid != -1 && runner_pid != 0)
 		kill(runner_pid, SIGKILL);
 	if (oldns_pid != -1 && oldns_pid != 0)
