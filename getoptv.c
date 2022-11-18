@@ -211,7 +211,7 @@ static int update_opt_val(struct opt *o, int *flags, char *val,
  * field of optv[] terminator.
  */
 int getoptv(struct opt *optv, char *argv[]) {
-	register int i, optc;
+	register int i;
 	register char *p;
 	register struct opt *o, *opt_inv;
 
@@ -299,7 +299,6 @@ INVOPT:			/* The code below is executed only for errors: */
  */
 void freeoptv(struct opt *optv) {
 	register struct opt *o;
-	register char **p;
 
 	if (optv == NULL) return;
 	for (o = optv;; o++) {

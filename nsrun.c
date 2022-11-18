@@ -99,7 +99,7 @@ struct src_tgt {
 static int req_src_tgt(struct src_tgt *mnt, const struct opt *t,
 		const char *srcfmt, ...) {
 	char *src = NULL, *tgt = NULL;
-	int ret_int, i;
+	int ret_int;
 	va_list ap;
 
 	/* Find mount destination from t. It must have .cnt > .vcnt and at
@@ -249,7 +249,7 @@ static int map_cred(const char *fn, int from, int to) {
 	};
 	if (asprintf(&buf, "%u %u 1\n%s", from, to,
 			from && to ? "0 0 1\n" : "") <= 0) {
-		warn("asprintf(): %m\n", fn);
+		warn("asprintf(): %m\n");
 		goto EXIT0;
 	};
 	if (writeall(fd, buf, strlen(buf), fn)) ret = 1;
