@@ -656,7 +656,6 @@ int main(int argc, char *argv[]) {
 		[opt_inv] = {'\0', 0},
 	};
 	int arg1;	/* index of 1st non-option arg */
-	char opt_e_chr = '\0';
 	struct namespace nsp[] = {
 		[opt_i] = {CLONE_NEWIPC,	"/proc/%u/ns/ipc",	-1},
 		[opt_m] = {CLONE_NEWNS,		"/proc/%u/ns/mnt",	-1},
@@ -703,8 +702,8 @@ int main(int argc, char *argv[]) {
 
 	/* Only -e=^H and -e=^? are supported at the moment: */
 	if (o[opt_e].cnt) {
-		if (str_eq(o[opt_e].val, "^H")) opt_e_chr = '\010';
-		else if (str_eq(o[opt_e].val, "^?")) opt_e_chr = '\177';
+		if (str_eq(o[opt_e].val, "^H")) o[opt_e].ival = '\010';
+		else if (str_eq(o[opt_e].val, "^?")) o[opt_e].ival = '\177';
 		else {
 			warn("unsupported -e=%s value\n", o[opt_e].val);
 			o[opt_inv].cnt++;
@@ -764,9 +763,9 @@ int main(int argc, char *argv[]) {
 				warn("stdin is not a tty\n");
 			else
 				warn("tcgetaddr(stdin): %m\n");
-		} else if (ttios.c_cc[VERASE] != opt_e_chr) {
+		} else if (ttios.c_cc[VERASE] != o[opt_e].ival) {
 			/* change erase char: */
-			ttios.c_cc[VERASE] = opt_e_chr;
+			ttios.c_cc[VERASE] = o[opt_e].ival;
 			/* change tty settings: */
 			if (tcsetattr(STDIN_FILENO, TCSANOW, &ttios) != 0)
 				warn("tcsetaddr(stdin): %m\n");
