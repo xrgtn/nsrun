@@ -1,4 +1,4 @@
-CFLAGS=-g -O0
+CFLAGS=-g -O0 -Wall
 LDLIBS=-lcap
 
 nsrun: nsrun.c getoptv.c uid_pw.c
