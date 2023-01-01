@@ -604,6 +604,9 @@ update_jail() {
 	mount_jail_var "$JAIL" "$JNAM"
 
 	# Do updates (emerge --update --deep --newuse @world):
+	# Fetch files first:
+	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
+		/usr/bin/emerge -fvuDN @world || die
 	nsrun -impuCTn=/run/netns/ns"$JNET" -r="$JAIL" -P="LANG=C.UTF-8" \
 		/usr/bin/emerge -vuDN @world
 
